@@ -166,3 +166,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Update Docker Hub Description
+        if: steps.dockerhub-check.outputs.has_dockerhub == 'true' && github.event_name != 'pull_request'
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ steps.dockerhub-check.outputs.dockerhub_repository }}
+          short-description: 'Self-hosted GitHub Actions runner with DooD and Actions Cache Server support'
+          readme-filepath: ./README.md

@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: github-runner:local
+    image: bestony/self-hosted-runner:latest
     container_name: github-runner
     restart: unless-stopped
     environment:
