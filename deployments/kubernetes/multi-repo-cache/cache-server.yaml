@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cache-server-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache-server
+  labels:
+    app: cache-server
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: cache-server
+  template:
+    metadata:
+      labels:
+        app: cache-server
+    spec:
+      containers:
+        - name: cache-server
+          image: ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: API_BASE_URL
+              value: "http://cache-server.github-runners.svc.cluster.local:3000"
+            - name: STORAGE_DRIVER
+              value: "filesystem"
+            - name: STORAGE_FILESYSTEM_PATH
+              value: "/data/cache"
+            - name: DB_DRIVER
+              value: "sqlite"
+            - name: DB_SQLITE_PATH
+              value: "/data/cache-server.db"
+            - name: CACHE_CLEANUP_OLDER_THAN_DAYS
+              value: "90"
+            - name: CACHE_FILESYSTEM_MAX_USAGE_PERCENT
+              value: "90"
+          volumeMounts:
+            - name: cache-data
+              mountPath: /data
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+      volumes:
+        - name: cache-data
+          persistentVolumeClaim:
+            claimName: cache-server-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cache-server
+  labels:
+    app: cache-server
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: http
+  selector:
+    app: cache-server
