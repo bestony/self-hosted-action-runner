@@ -38,6 +38,7 @@ cp .env.example .env
 | `RUNNER_TOKEN` | **Yes** | - | Runner registration token generated from GitHub Settings. |
 | `RUNNER_NAME` | No | Container hostname | Unique runner name shown in GitHub UI. |
 | `RUNNER_NAME_PREFIX` | No | - | Prefix for runner name when `RUNNER_NAME` is unset (generates `${RUNNER_NAME_PREFIX}${HOSTNAME}`, e.g. `ci-runner-`). |
+| `RUNNER_WORKDIR` | No | `/runner/_work` | Work directory for jobs. For DooD, host path must match container path (e.g. `/tmp/github-runner/work`). |
 | `RUNNER_LABELS` | No | - | Comma-separated custom labels (e.g. `gpu,docker,self-hosted`). |
 | `RUNNER_GROUP` | No | `Default` | Organization runner group (for organization runners). |
 | `ACTIONS_RESULTS_URL` | No | - | External GHA Cache Server endpoint (must start with `http://` or `https://`). Trailing slash is enforced automatically. |
@@ -81,6 +82,12 @@ docker compose logs -f runner
 
 The runner container mounts `/var/run/docker.sock` from the host. At startup, `entrypoint.sh` reads the socket's host GID, creates a matching group inside the container if needed, and adds the unprivileged `runner` user to it.
 
+> [!IMPORTANT]
+> **DooD Workspace Path Matching**:
+> When workflows use container actions (such as `container:` jobs or `uses: docker://...`), the runner requests the **host** Docker daemon to bind-mount the job workspace into the newly created job container. If the workspace is inside an isolated Docker volume (like `/runner/_work`), that path does NOT exist on the host filesystem, causing job containers to see an empty directory!
+> To resolve this, `RUNNER_WORKDIR` must be bind-mounted from the host using the **identical path on both the host and the container** (e.g. `/tmp/github-runner/work:/tmp/github-runner/work`).
+> **Note**: The `--work` directory is permanently recorded at initial registration time in `/runner/.runner`. Changing `RUNNER_WORKDIR` requires removing `/runner/.runner` and re-registering.
+
 Workflows can directly execute:
 
 ```yaml
@@ -117,6 +124,7 @@ To use an external cache server (such as [`falcondev-oss/github-actions-cache-se
    ```
 3. The image has a binary patch applied to `Runner.Worker.dll` replacing internal `ACTIONS_RESULTS_URL` with `ACTIONS_RESULTS_ORL`, ensuring runner jobs use your private cache endpoint.
 4. Auto-update is disabled (`--disableupdate`) to prevent official updates from reverting the binary patch.
+5. **Network Reachability Note**: When running container actions via DooD, job containers run directly on the host Docker daemon's bridge network rather than the compose internal network. For job steps inside containers to reach the cache server, ensure `ACTIONS_RESULTS_URL` is set to an address reachable from the host (such as `http://host.docker.internal:3000/` or your host IP).
 
 ---
 
@@ -168,12 +176,15 @@ Ensure the repository permits automated release creation and package publishing:
 2. Under **Workflow permissions**, select **Read and write permissions**.
 3. Check **Allow GitHub Actions to create and approve pull requests**.
 
-### 2. Configure Docker Hub Secrets (Optional)
-If pushing images to Docker Hub in addition to GHCR, add these repository secrets in **Settings** > **Secrets and variables** > **Actions**:
-- `DOCKERHUB_USERNAME`: Your Docker Hub username.
-- `DOCKERHUB_TOKEN`: A Personal Access Token from Docker Hub with Read & Write permissions.
+### 2. Configure Docker Hub Secrets & Variables (Optional)
+If pushing images to Docker Hub in addition to GHCR, configure the following in **Settings** > **Secrets and variables** > **Actions**:
+- **Repository Secrets**:
+  - `DOCKERHUB_USERNAME`: Your Docker Hub account username.
+  - `DOCKERHUB_TOKEN`: A Personal Access Token from Docker Hub with Read & Write permissions.
+- **Repository Variables**:
+  - `DOCKERHUB_REPOSITORY`: The full target Docker Hub repository name (e.g. `your-user/github-runner`).
 
-> *Note: If Docker Hub secrets are omitted, the workflow will publish to GHCR and skip Docker Hub without failing.*
+> *Note: If any of these credentials/variables are omitted, the workflow will publish to GHCR and safely skip Docker Hub without failing.*
 
 ### 3. Pulling Pre-Built Images
 
