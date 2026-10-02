@@ -1,0 +1,14 @@
+.git
+.gitignore
+.dockerignore
+.agents
+.grok
+.pi
+.opencode
+.commandcode
+openspec
+deployments
+docker-compose*.yml
+.env*
+*.md
+.github
