@@ -10,8 +10,7 @@ set -Eeuo pipefail
 # ------------------------------------------------------------------------------
 # Global Defaults and State
 # ------------------------------------------------------------------------------
-VERSION="1.0.0"
-export VERSION
+INSTALLER_VERSION="1.0.0"
 DEFAULT_IMAGE="ghcr.io/bestony/self-hosted-action-runner:latest"
 DEFAULT_CACHE_IMAGE="ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0"
 
@@ -244,7 +243,8 @@ ensure_dependencies() {
 
             if [ "$do_install" = true ]; then
                 log_info "Installing Docker via https://get.docker.com..."
-                curl -fsSL https://get.docker.com | $SUDO sh
+                unset VERSION 2>/dev/null || true
+                curl -fsSL https://get.docker.com | env -u VERSION $SUDO sh
 
                 # Start docker service if possible
                 if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
@@ -1038,7 +1038,7 @@ do_uninstall() {
 # ------------------------------------------------------------------------------
 show_help() {
     cat <<EOF
-GitHub Actions Runner & Cache Server One-Line Installer
+GitHub Actions Runner & Cache Server One-Line Installer v${INSTALLER_VERSION}
 
 Usage:
   install.sh [OPTIONS]
