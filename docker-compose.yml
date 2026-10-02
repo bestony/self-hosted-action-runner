@@ -27,7 +27,7 @@ services:
         required: false
 
   cache-server:
-    image: ghcr.io/falcondev-oss/github-actions-cache-server:v9.8.0
+    image: ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0
     container_name: github-actions-cache-server
     restart: unless-stopped
     ports:
