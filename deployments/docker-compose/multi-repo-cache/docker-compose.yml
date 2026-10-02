@@ -1,0 +1,78 @@
+services:
+  x-runner-common: &runner-common
+    image: ${RUNNER_IMAGE:-ghcr.io/bestony/self-hosted-action-runner:latest}
+    restart: unless-stopped
+    depends_on:
+      cache-server:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4096M
+
+  cache-server:
+    image: ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0
+    container_name: github-actions-cache-server
+    restart: unless-stopped
+    ports:
+      - "${CACHE_PORT:-3000}:3000"
+    environment:
+      API_BASE_URL: ${CACHE_URL:-http://cache-server:3000}
+      STORAGE_DRIVER: filesystem
+      STORAGE_FILESYSTEM_PATH: /data/cache
+      DB_DRIVER: sqlite
+      DB_SQLITE_PATH: /data/cache-server.db
+      CACHE_CLEANUP_OLDER_THAN_DAYS: ${CACHE_CLEANUP_OLDER_THAN_DAYS:-90}
+      CACHE_FILESYSTEM_MAX_USAGE_PERCENT: ${CACHE_FILESYSTEM_MAX_USAGE_PERCENT:-90}
+    volumes:
+      - cache_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  runner-repo-a:
+    <<: *runner-common
+    container_name: github-runner-repo-a
+    environment:
+      - RUNNER_URL=${REPO_A_URL}
+      - RUNNER_TOKEN=${REPO_A_TOKEN}
+      - RUNNER_NAME=${REPO_A_NAME:-}
+      - RUNNER_NAME_PREFIX=${REPO_A_NAME_PREFIX:-repo-a-}
+      - RUNNER_LABELS=${REPO_A_LABELS:-self-hosted,linux,docker}
+      - RUNNER_GROUP=${REPO_A_GROUP:-}
+      - RUNNER_WORKDIR=${REPO_A_WORKDIR:-/tmp/github-runner/repo-a-work}
+      - ACTIONS_RESULTS_URL=${CACHE_URL:-http://cache-server:3000}/
+      - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - runner_a_data:/runner
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${REPO_A_WORKDIR:-/tmp/github-runner/repo-a-work}:${REPO_A_WORKDIR:-/tmp/github-runner/repo-a-work}
+
+  runner-repo-b:
+    <<: *runner-common
+    container_name: github-runner-repo-b
+    environment:
+      - RUNNER_URL=${REPO_B_URL}
+      - RUNNER_TOKEN=${REPO_B_TOKEN}
+      - RUNNER_NAME=${REPO_B_NAME:-}
+      - RUNNER_NAME_PREFIX=${REPO_B_NAME_PREFIX:-repo-b-}
+      - RUNNER_LABELS=${REPO_B_LABELS:-self-hosted,linux,docker}
+      - RUNNER_GROUP=${REPO_B_GROUP:-}
+      - RUNNER_WORKDIR=${REPO_B_WORKDIR:-/tmp/github-runner/repo-b-work}
+      - ACTIONS_RESULTS_URL=${CACHE_URL:-http://cache-server:3000}/
+      - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - runner_b_data:/runner
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${REPO_B_WORKDIR:-/tmp/github-runner/repo-b-work}:${REPO_B_WORKDIR:-/tmp/github-runner/repo-b-work}
+
+volumes:
+  cache_data:
+  runner_a_data:
+  runner_b_data:
