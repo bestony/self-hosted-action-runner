@@ -13,11 +13,13 @@ services:
       - RUNNER_NAME_PREFIX=${ORG_RUNNER_NAME_PREFIX:-org-runner-}
       - RUNNER_LABELS=${ORG_RUNNER_LABELS:-org,docker}
       - RUNNER_GROUP=${ORG_RUNNER_GROUP:-Default}
+      - RUNNER_WORKDIR=${ORG_RUNNER_WORKDIR:-/tmp/github-runner/org-work}
       - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
       - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
     volumes:
       - runner_org_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${ORG_RUNNER_WORKDIR:-/tmp/github-runner/org-work}:${ORG_RUNNER_WORKDIR:-/tmp/github-runner/org-work}
     deploy:
       resources:
         limits:
@@ -37,11 +39,13 @@ services:
       - RUNNER_NAME=${REPO_RUNNER_NAME:-}
       - RUNNER_NAME_PREFIX=${REPO_RUNNER_NAME_PREFIX:-repo-runner-}
       - RUNNER_LABELS=${REPO_RUNNER_LABELS:-repo,docker}
+      - RUNNER_WORKDIR=${REPO_RUNNER_WORKDIR:-/tmp/github-runner/repo-work}
       - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
       - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
     volumes:
       - runner_repo_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${REPO_RUNNER_WORKDIR:-/tmp/github-runner/repo-work}:${REPO_RUNNER_WORKDIR:-/tmp/github-runner/repo-work}
     deploy:
       resources:
         limits:

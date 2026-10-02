@@ -111,3 +111,25 @@ tolerations:
 - The runner pod mounts the host's `/var/run/docker.sock` via `hostPath`.
 - The runner entrypoint dynamically discovers the socket's GID on startup and assigns the non-root runner user (`UID 1001`) to that group.
 - If your cluster uses Pod Security Standards (PSS) or Kyverno/OPA Gatekeeper, ensure hostPath volume permissions are allowed for the runner namespace.
+
+---
+
+## DooD and Container Jobs Path Parity
+
+When workflow jobs run container steps (`container:` or `uses: docker://...`) via the mounted Docker socket, the host node's Docker daemon bind-mounts workspace paths from the host node filesystem. If `RUNNER_WORKDIR` points to a path only present in the runner pod's PVC, the host daemon will mount an empty directory on the node.
+
+To resolve this when running container actions on Kubernetes:
+- Configure `RUNNER_WORKDIR` (e.g. `/tmp/github-runner/work`) in your pod environment or ConfigMap.
+- Mount a `hostPath` volume into the pod at the **identical** path:
+  ```yaml
+  volumeMounts:
+    - name: runner-work
+      mountPath: /tmp/github-runner/work
+  volumes:
+    - name: runner-work
+      hostPath:
+        path: /tmp/github-runner/work
+        type: DirectoryOrCreate
+  ```
+- **Important**: `--work` is fixed in `.runner` during initial registration. Changing `RUNNER_WORKDIR` requires deleting the existing runner registration.
+

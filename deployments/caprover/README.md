@@ -65,6 +65,21 @@ To allow GitHub Actions workflows to run `docker build` or container actions (`u
    ```
 3. Click **Update Service**.
 
+> [!WARNING]
+> **DooD Workspace Path Parity for Container Actions**:
+> When workflows use container actions (`uses: docker://...`) or `container:` job definitions, the host Docker daemon creates containers and attempts to mount the runner's workspace from the host filesystem. If the workspace resides only inside a container-isolated volume, the host path does not exist and container jobs will see an empty directory.
+> To support container actions:
+> 1. Set environment variable `RUNNER_WORKDIR=/tmp/github-runner/work` in App Configs.
+> 2. Add an identical bind mount in Service Update Override:
+>    ```json
+>    {
+>      "Type": "bind",
+>      "Source": "/tmp/github-runner/work",
+>      "Target": "/tmp/github-runner/work"
+>    }
+>    ```
+> 3. Note that `--work` is permanently recorded in `.runner` during initial registration; changing `RUNNER_WORKDIR` requires deleting `.runner` and re-registering.
+
 ---
 
 ## 5. Deploy the Runner App

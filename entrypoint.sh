@@ -82,7 +82,10 @@ else
     log "debug" "Volume runtime binaries match image version (${CURRENT_IMG_VERSION}). Skipping sync."
 fi
 
-# Step 2: Handle permissions & Docker socket if running as root
+# Step 2: Handle permissions, work directory & Docker socket
+RUNNER_WORKDIR="${RUNNER_WORKDIR:-/runner/_work}"
+mkdir -p "${RUNNER_WORKDIR}"
+
 IS_ROOT=false
 if [ "$(id -u)" -eq 0 ]; then
     IS_ROOT=true
@@ -90,6 +93,7 @@ fi
 
 if [ "$IS_ROOT" = true ]; then
     chown -R runner:runner "${RUNNER_DIR}"
+    chown -R runner:runner "${RUNNER_WORKDIR}"
 
     # Docker socket GID detection and group assignment
     DOCKER_SOCK="/var/run/docker.sock"
@@ -161,8 +165,10 @@ if [ ! -f "${RUNNER_DIR}/.runner" ]; then
         "--url" "$RUNNER_URL"
         "--token" "$RUNNER_TOKEN"
         "--name" "$RUNNER_NAME_VALUE"
+        "--work" "$RUNNER_WORKDIR"
         "--replace"
     )
+    log "info" "Configured runner work directory: ${RUNNER_WORKDIR}"
 
     if [ -n "${RUNNER_LABELS:-}" ]; then
         CONFIG_ARGS+=("--labels" "$RUNNER_LABELS")
