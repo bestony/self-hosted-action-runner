@@ -1,0 +1,105 @@
+name: Check Upstream Runner Release
+
+on:
+  schedule:
+    # Run every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      runner_version:
+        description: 'Specific actions/runner version to tag/release (e.g. 2.337.0). Leave empty to check latest.'
+        required: false
+        default: ''
+      force_release:
+        description: 'Force release even if tag already exists'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  check-and-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine target runner version
+        id: determine-version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_VERSION: ${{ github.event.inputs.runner_version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            CLEAN_VERSION="${INPUT_VERSION#v}"
+            if ! [[ "$CLEAN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Version '$INPUT_VERSION' does not match semantic version regex ^[0-9]+\.[0-9]+\.[0-9]+$" >&2
+              exit 1
+            fi
+
+            echo "Validating version $CLEAN_VERSION against upstream actions/runner releases..."
+            IS_VALID=$(gh api "repos/actions/runner/releases/tags/v${CLEAN_VERSION}" --jq '.tag_name != null and .draft == false and .prerelease == false' 2>/dev/null || echo "false")
+            if [ "$IS_VALID" != "true" ]; then
+              echo "Error: Release v${CLEAN_VERSION} does not exist as a stable release in actions/runner!" >&2
+              exit 1
+            fi
+
+            echo "Version $CLEAN_VERSION validated successfully."
+            echo "version=$CLEAN_VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag=v$CLEAN_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "Querying GitHub API for latest stable actions/runner release..."
+            LATEST_RELEASE=$(gh api repos/actions/runner/releases --jq '.[] | select(.prerelease == false and .draft == false) | .tag_name' | head -n 1)
+            if [ -z "$LATEST_RELEASE" ]; then
+              echo "Failed to fetch latest upstream release!" >&2
+              exit 1
+            fi
+            CLEAN_VERSION="${LATEST_RELEASE#v}"
+            echo "Latest upstream release: $LATEST_RELEASE (version: $CLEAN_VERSION)"
+            echo "version=$CLEAN_VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag=v$CLEAN_VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check if tag already exists
+        id: check-tag
+        env:
+          TARGET_TAG: ${{ steps.determine-version.outputs.tag }}
+          FORCE_RELEASE: ${{ github.event.inputs.force_release }}
+        run: |
+          if [ "$FORCE_RELEASE" = "true" ]; then
+            echo "Force release is requested. Proceeding."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          elif git rev-parse "$TARGET_TAG" >/dev/null 2>&1; then
+            echo "Tag $TARGET_TAG already exists in repository. No update needed."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag $TARGET_TAG does not exist. New release required!"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Git Tag and GitHub Release
+        if: steps.check-tag.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.determine-version.outputs.tag }}
+          RUNNER_VERSION: ${{ steps.determine-version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          echo "Tagging $TAG_NAME..."
+          git tag -a "$TAG_NAME" -m "Release $TAG_NAME (actions/runner $RUNNER_VERSION)"
+          git push origin "$TAG_NAME"
+
+          echo "Creating GitHub Release..."
+          gh release create "$TAG_NAME" \
+            --title "$TAG_NAME (actions/runner $RUNNER_VERSION)" \
+            --notes "Automated release based on official [actions/runner $TAG_NAME](https://github.com/actions/runner/releases/tag/$TAG_NAME)."
+
+          echo "Triggering docker-publish.yml workflow for $TAG_NAME..."
+          gh workflow run docker-publish.yml --ref "$TAG_NAME" -f runner_version="$RUNNER_VERSION"
