@@ -2,8 +2,8 @@ FROM ubuntu:22.04
 
 ARG TARGETARCH
 ARG RUNNER_VERSION=2.337.0
-ARG RUNNER_SHA256_AMD64="70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613"
-ARG RUNNER_SHA256_ARM64="9b1dc70626422526e3c94767cf024896beb15da5342a3f4819bf2feac13e0393"
+ARG RUNNER_SHA256_AMD64=""
+ARG RUNNER_SHA256_ARM64=""
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV RUNNER_VERSION=${RUNNER_VERSION}
@@ -41,17 +41,25 @@ RUN useradd -m -s /bin/bash -u 1001 runner && \
 RUN case "${TARGETARCH:-amd64}" in \
         amd64) \
             RUNNER_ARCH="x64"; \
-            EXPECTED_SHA256="${RUNNER_SHA256_AMD64}" ;; \
+            EXPECTED_SHA256="${RUNNER_SHA256_AMD64}"; \
+            if [ -z "$EXPECTED_SHA256" ] && [ "$RUNNER_VERSION" = "2.337.0" ]; then \
+                EXPECTED_SHA256="70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613"; \
+            fi ;; \
         arm64) \
             RUNNER_ARCH="arm64"; \
-            EXPECTED_SHA256="${RUNNER_SHA256_ARM64}" ;; \
+            EXPECTED_SHA256="${RUNNER_SHA256_ARM64}"; \
+            if [ -z "$EXPECTED_SHA256" ] && [ "$RUNNER_VERSION" = "2.337.0" ]; then \
+                EXPECTED_SHA256="9b1dc70626422526e3c94767cf024896beb15da5342a3f4819bf2feac13e0393"; \
+            fi ;; \
         *) echo "Unsupported architecture: ${TARGETARCH}"; exit 1 ;; \
     esac && \
+    if [ -z "$EXPECTED_SHA256" ]; then \
+        echo "Error: Checksum verification failed: RUNNER_SHA256_${RUNNER_ARCH} must be provided when RUNNER_VERSION is not 2.337.0" >&2; \
+        exit 1; \
+    fi && \
     mkdir -p /opt/runner-dist /runner && \
     curl -fL -o /tmp/runner.tar.gz "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz" && \
-    if [ -n "${EXPECTED_SHA256}" ]; then \
-        echo "${EXPECTED_SHA256}  /tmp/runner.tar.gz" | sha256sum -c - || { echo "Checksum verification failed!" >&2; exit 1; }; \
-    fi && \
+    echo "${EXPECTED_SHA256}  /tmp/runner.tar.gz" | sha256sum -c - || { echo "Checksum verification failed!" >&2; exit 1; } && \
     tar xzf /tmp/runner.tar.gz -C /opt/runner-dist && \
     rm /tmp/runner.tar.gz && \
     /opt/runner-dist/bin/installdependencies.sh && \
