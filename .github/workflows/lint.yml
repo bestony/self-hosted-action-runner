@@ -1,0 +1,45 @@
+name: Lint and Validate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        run: |
+          shellcheck entrypoint.sh install.sh tests/*.sh
+
+      - name: Run actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Run installer test suite
+        run: |
+          bash tests/install_test.sh
+
+      - name: Validate Docker Compose configurations
+        run: |
+          docker compose -f docker-compose.yml --env-file .env.example config -q
+          docker compose -f deployments/docker-compose/docker-compose.multi.yml --env-file deployments/docker-compose/.env.multi.example config -q
+          docker compose -f deployments/docker-compose/multi-repo-cache/docker-compose.yml --env-file deployments/docker-compose/multi-repo-cache/.env.example config -q
+
+      - name: Validate Kubernetes manifests with kustomize
+        run: |
+          kubectl kustomize deployments/kubernetes/multi-repo-cache
