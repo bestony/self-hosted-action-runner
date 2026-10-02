@@ -1,0 +1,127 @@
+captainVersion: 4
+services:
+    $$cap_appname-cache:
+        image: $$cap_cache_image
+        volumes:
+            - $$cap_appname-cache-data:/data
+        restart: unless-stopped
+        environment:
+            API_BASE_URL: http://srv-captain--$$cap_appname-cache:3000
+            STORAGE_DRIVER: filesystem
+            STORAGE_FILESYSTEM_PATH: /data/cache
+            DB_DRIVER: sqlite
+            DB_SQLITE_PATH: /data/cache-server.db
+            CACHE_CLEANUP_OLDER_THAN_DAYS: '90'
+            CACHE_FILESYSTEM_MAX_USAGE_PERCENT: '90'
+        caproverExtra:
+            containerHttpPort: '3000'
+            notExposeAsWebApp: 'true'
+
+    $$cap_appname-runner-a:
+        depends_on:
+            - $$cap_appname-cache
+        image: $$cap_runner_image
+        volumes:
+            - $$cap_appname-runner-a-data:/runner
+            - /var/run/docker.sock:/var/run/docker.sock
+            - /tmp/github-runner/$$cap_appname-runner-a:/tmp/github-runner/$$cap_appname-runner-a
+        restart: unless-stopped
+        environment:
+            RUNNER_URL: $$cap_runner_a_url
+            RUNNER_TOKEN: $$cap_runner_a_token
+            RUNNER_NAME_PREFIX: $$cap_appname-a-
+            RUNNER_LABELS: $$cap_runner_a_labels
+            RUNNER_WORKDIR: /tmp/github-runner/$$cap_appname-runner-a
+            ACTIONS_RESULTS_URL: http://srv-captain--$$cap_appname-cache:3000/
+        caproverExtra:
+            notExposeAsWebApp: 'true'
+
+    $$cap_appname-runner-b:
+        depends_on:
+            - $$cap_appname-cache
+        image: $$cap_runner_image
+        volumes:
+            - $$cap_appname-runner-b-data:/runner
+            - /var/run/docker.sock:/var/run/docker.sock
+            - /tmp/github-runner/$$cap_appname-runner-b:/tmp/github-runner/$$cap_appname-runner-b
+        restart: unless-stopped
+        environment:
+            RUNNER_URL: $$cap_runner_b_url
+            RUNNER_TOKEN: $$cap_runner_b_token
+            RUNNER_NAME_PREFIX: $$cap_appname-b-
+            RUNNER_LABELS: $$cap_runner_b_labels
+            RUNNER_WORKDIR: /tmp/github-runner/$$cap_appname-runner-b
+            ACTIONS_RESULTS_URL: http://srv-captain--$$cap_appname-cache:3000/
+        caproverExtra:
+            notExposeAsWebApp: 'true'
+
+caproverOneClickApp:
+    variables:
+        - id: $$cap_runner_image
+          label: Runner Container Image
+          defaultValue: ghcr.io/bestony/self-hosted-action-runner:latest
+          description: Docker image for GitHub Actions runner
+          validRegex: /^([^\s])+$/
+
+        - id: $$cap_cache_image
+          label: Cache Server Container Image
+          defaultValue: ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0
+          description: Docker image for GitHub Actions cache server
+          validRegex: /^([^\s])+$/
+
+        - id: $$cap_runner_a_url
+          label: Repository or Org A URL
+          description: Full GitHub URL for Runner A (e.g. https://github.com/owner/repo-a)
+          validRegex: /^https:\/\/github\.com\/[^\/\s]+(\/[^\/\s]+)?\/?$/
+
+        - id: $$cap_runner_a_token
+          label: Registration Token for Runner A
+          description: Registration token from GitHub Settings > Actions > Runners > New self-hosted runner
+          validRegex: /^([^\s])+$/
+
+        - id: $$cap_runner_a_labels
+          label: Runner A Labels
+          defaultValue: self-hosted,linux,docker,caprover
+          description: Comma-separated labels for Runner A
+          validRegex: /^([^\s])+$/
+
+        - id: $$cap_runner_b_url
+          label: Repository or Org B URL
+          description: Full GitHub URL for Runner B (e.g. https://github.com/owner/repo-b)
+          validRegex: /^https:\/\/github\.com\/[^\/\s]+(\/[^\/\s]+)?\/?$/
+
+        - id: $$cap_runner_b_token
+          label: Registration Token for Runner B
+          description: Registration token from GitHub Settings > Actions > Runners > New self-hosted runner
+          validRegex: /^([^\s])+$/
+
+        - id: $$cap_runner_b_labels
+          label: Runner B Labels
+          defaultValue: self-hosted,linux,docker,caprover
+          description: Comma-separated labels for Runner B
+          validRegex: /^([^\s])+$/
+
+    instructions:
+        start: >-
+            This template deploys two GitHub Actions self-hosted runners alongside a shared GitHub Actions Cache Server.
+
+            Before starting, obtain runner registration tokens from GitHub:
+            1. Repository or Org A: Settings > Actions > Runners > New runner.
+            2. Repository or Org B: Settings > Actions > Runners > New runner.
+
+            Each runner receives its own persistent storage volume, dedicated host workspace directory, and host Docker socket mount (DooD).
+            The cache server is shared between runners and accessible via CapRover internal overlay network.
+        end: >-
+            Your GitHub Actions Multi-Runner stack has been deployed!
+
+            IMPORTANT: Registration tokens expire in 1 hour, but they are only needed during initial registration. Credentials are now stored in persistent volumes.
+
+            To add a third runner:
+            - Create another app using the single runner CapRover guide or clone one of the runner service blocks in this template.
+
+            Networking note:
+            Workflow steps using container: jobs execute on the host daemon in a separate bridge network and cannot resolve internal CapRover DNS names. If you use container: jobs, configure a host-reachable IP for the cache server.
+    displayName: GitHub Actions Multi-Runner with Cache
+    isOfficial: false
+    description: Deploy multiple GitHub Actions self-hosted runners with a shared Actions cache server and DooD support on CapRover
+    documentation: Taken from https://github.com/bestony/self-hosted-action-runner
