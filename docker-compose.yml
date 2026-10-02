@@ -1,0 +1,43 @@
+services:
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: github-runner:local
+    container_name: github-runner
+    restart: unless-stopped
+    environment:
+      - RUNNER_URL=${RUNNER_URL}
+      - RUNNER_TOKEN=${RUNNER_TOKEN}
+      - RUNNER_NAME=${RUNNER_NAME:-}
+      - RUNNER_NAME_PREFIX=${RUNNER_NAME_PREFIX:-}
+      - RUNNER_LABELS=${RUNNER_LABELS:-}
+      - RUNNER_GROUP=${RUNNER_GROUP:-}
+      - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
+      - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - runner_data:/runner
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      cache-server:
+        condition: service_started
+        required: false
+
+  cache-server:
+    image: ghcr.io/falcondev-oss/github-actions-cache-server:latest
+    container_name: github-actions-cache-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+    volumes:
+      - cache_data:/data
+    profiles:
+      - cache
+      - full
+
+volumes:
+  runner_data:
+  cache_data:
