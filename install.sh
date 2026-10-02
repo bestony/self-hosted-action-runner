@@ -24,6 +24,14 @@ DEBUG_MODE=false
 DOCKER="docker"
 SUDO=""
 
+docker_exec() {
+    if [ "$DOCKER" = "sudo docker" ]; then
+        sudo docker "$@"
+    else
+        docker "$@"
+    fi
+}
+
 # Configuration values
 RUNNER_COUNT=0
 declare -a RUNNER_URLS=()
@@ -83,6 +91,147 @@ mask_token() {
     else
         local tail="${token: -4}"
         echo "******${tail}"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Banner & Progress Display
+# ------------------------------------------------------------------------------
+print_banner() {
+    if [ -t 1 ]; then
+        printf "%b%b" "${COLOR_BLUE}" "${COLOR_BOLD}"
+    fi
+    cat <<'EOF'
+  ____  _____ _     _____       _   _  ___  ____ _____ _____ ____  
+ / ___|| ____| |   |  ___|     | | | |/ _ \/ ___|_   _| ____|  _ \ 
+ \___ \|  _| | |   | |_  _____ | |_| | | | \___ \ | | |  _| | | | |
+  ___) | |___| |___|  _| |_____||  _  | |_| |___) || | | |___| |_| |
+ |____/|_____|_____|_|          |_| |_|\___/|____/ |_| |_____|____/ 
+  ____  _   _ _   _ _   _ _____ ____  
+ |  _ \| | | | \ | | \ | | ____|  _ \ 
+ | |_) | | | |  \| |  \| |  _| | |_) |
+ |  _ <| |_| | |\  | |\  | |___|  _ < 
+ |_| \_\\___/|_| \_|_| \_|_____|_| \_\
+EOF
+    if [ -t 1 ]; then
+        printf "%b\n" "${COLOR_RESET}"
+        printf "%b┌────────────────────────────────────────────────────────────────────────────┐%b\n" "${COLOR_BLUE}" "${COLOR_RESET}"
+        printf "%b│%b %bProject%b : GitHub Actions Self-Hosted Runner Stack                          %b│%b\n" "${COLOR_BLUE}" "${COLOR_RESET}" "${COLOR_BOLD}" "${COLOR_RESET}" "${COLOR_BLUE}" "${COLOR_RESET}"
+        printf "%b│%b %bRepo%b    : https://github.com/bestony/self-hosted-action-runner             %b│%b\n" "${COLOR_BLUE}" "${COLOR_RESET}" "${COLOR_BOLD}" "${COLOR_RESET}" "${COLOR_BLUE}" "${COLOR_RESET}"
+        printf "%b│%b %bVersion%b : v%-64s %b│%b\n" "${COLOR_BLUE}" "${COLOR_RESET}" "${COLOR_BOLD}" "${COLOR_RESET}" "${INSTALLER_VERSION}" "${COLOR_BLUE}" "${COLOR_RESET}"
+        printf "%b│%b %bImage%b   : %-66s %b│%b\n" "${COLOR_BLUE}" "${COLOR_RESET}" "${COLOR_BOLD}" "${COLOR_RESET}" "${DEFAULT_IMAGE}" "${COLOR_BLUE}" "${COLOR_RESET}"
+        printf "%b│%b %bDocs%b    : https://github.com/bestony/self-hosted-action-runner#readme      %b│%b\n" "${COLOR_BLUE}" "${COLOR_RESET}" "${COLOR_BOLD}" "${COLOR_RESET}" "${COLOR_BLUE}" "${COLOR_RESET}"
+        printf "%b└────────────────────────────────────────────────────────────────────────────┘%b\n" "${COLOR_BLUE}" "${COLOR_RESET}"
+    else
+        printf "\n+----------------------------------------------------------------------------+\n"
+        printf "| Project : GitHub Actions Self-Hosted Runner Stack                          |\n"
+        printf "| Repo    : https://github.com/bestony/self-hosted-action-runner             |\n"
+        printf "| Version : v%-64s |\n" "${INSTALLER_VERSION}"
+        printf "| Image   : %-66s |\n" "${DEFAULT_IMAGE}"
+        printf "| Docs    : https://github.com/bestony/self-hosted-action-runner#readme      |\n"
+        printf "+----------------------------------------------------------------------------+\n\n"
+    fi
+}
+
+step_header() {
+    local step="$1"
+    local title="$2"
+    if [ -t 1 ]; then
+        printf "\n${COLOR_BOLD}${COLOR_BLUE}==>${COLOR_RESET} ${COLOR_BOLD}[%s] %s${COLOR_RESET}\n" "$step" "$title"
+    else
+        printf "\n==> [%s] %s\n" "$step" "$title"
+    fi
+}
+
+LOG_FILE=""
+CURRENT_SPINNER_PID=""
+
+cleanup_spinner() {
+    if [ -n "${CURRENT_SPINNER_PID:-}" ] && kill -0 "$CURRENT_SPINNER_PID" 2>/dev/null; then
+        kill -9 "$CURRENT_SPINNER_PID" 2>/dev/null || true
+        wait "$CURRENT_SPINNER_PID" 2>/dev/null || true
+    fi
+    if [ -t 1 ]; then
+        printf "\033[?25h"
+    fi
+}
+
+trap 'cleanup_spinner; exit 130' SIGINT SIGTERM
+
+init_log_file() {
+    if [ -z "$LOG_FILE" ]; then
+        if [ -n "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR" ]; then
+            LOG_FILE="${INSTALL_DIR}/install.log"
+        else
+            LOG_FILE="$(mktemp /tmp/ghr-install-XXXXXX.log 2>/dev/null || echo "/tmp/ghr-install.log")"
+        fi
+        touch "$LOG_FILE"
+    fi
+}
+
+run_with_spinner() {
+    local label="$1"
+    shift
+    init_log_file
+
+    local start_time=$SECONDS
+
+    # Execute command in background, appending output to log file
+    "$@" >> "$LOG_FILE" 2>&1 &
+    local cmd_pid=$!
+    CURRENT_SPINNER_PID="$cmd_pid"
+
+    local is_interactive_tty=false
+    if [ -t 1 ] && [ "$NON_INTERACTIVE" = false ]; then
+        is_interactive_tty=true
+    fi
+
+    if [ "$is_interactive_tty" = true ]; then
+        printf "\033[?25l"
+        local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+        local spin_idx=0
+        while kill -0 "$cmd_pid" 2>/dev/null; do
+            local elapsed=$((SECONDS - start_time))
+            printf "\r${COLOR_BLUE}%s${COLOR_RESET} %s (%ds) \033[K" "${spin_chars[spin_idx]}" "$label" "$elapsed"
+            spin_idx=$(( (spin_idx + 1) % 10 ))
+            sleep 0.1
+        done
+        printf "\033[?25h"
+    else
+        printf "  ... %s\n" "$label"
+        local last_notice=0
+        while kill -0 "$cmd_pid" 2>/dev/null; do
+            sleep 1
+            local elapsed=$((SECONDS - start_time))
+            if [ $((elapsed - last_notice)) -ge 10 ] && kill -0 "$cmd_pid" 2>/dev/null; then
+                printf "  ... still running (%ds)\n" "$elapsed"
+                last_notice="$elapsed"
+            fi
+        done
+    fi
+
+    wait "$cmd_pid"
+    local ec=$?
+    CURRENT_SPINNER_PID=""
+    local total_elapsed=$((SECONDS - start_time))
+
+    if [ "$ec" -eq 0 ]; then
+        if [ "$is_interactive_tty" = true ]; then
+            printf "\r${COLOR_GREEN}✓${COLOR_RESET} %s (%ds)\033[K\n" "$label" "$total_elapsed"
+        else
+            printf "  ✓ %s (%ds)\n" "$label" "$total_elapsed"
+        fi
+        return 0
+    else
+        if [ "$is_interactive_tty" = true ]; then
+            printf "\r${COLOR_RED}✗${COLOR_RESET} %s (failed after %ds)\033[K\n" "$label" "$total_elapsed"
+        else
+            printf "  ✗ %s (failed after %ds)\n" "$label" "$total_elapsed"
+        fi
+        log_error "Command failed with exit code ${ec}."
+        log_error "Last 30 lines of log (${LOG_FILE}):"
+        tail -n 30 "$LOG_FILE" >&2 || true
+        return "$ec"
     fi
 }
 
@@ -243,8 +392,7 @@ ensure_dependencies() {
 
             if [ "$do_install" = true ]; then
                 log_info "Installing Docker via https://get.docker.com..."
-                unset VERSION 2>/dev/null || true
-                curl -fsSL https://get.docker.com | env -u VERSION $SUDO sh
+                run_with_spinner "Installing Docker Engine and Compose plugin" bash -c 'unset VERSION 2>/dev/null || true; curl -fsSL https://get.docker.com | env -u VERSION '"$SUDO"' sh'
 
                 # Start docker service if possible
                 if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
@@ -299,11 +447,11 @@ ensure_dependencies() {
             local installed_compose=false
 
             if command -v apt-get >/dev/null 2>&1; then
-                $SUDO apt-get update -qq && $SUDO apt-get install -y -qq docker-compose-plugin 2>/dev/null && installed_compose=true || true
+                run_with_spinner "Installing docker-compose-plugin via apt" bash -c "$SUDO apt-get update -qq && $SUDO apt-get install -y -qq docker-compose-plugin" && installed_compose=true || true
             elif command -v dnf >/dev/null 2>&1; then
-                $SUDO dnf install -y -q docker-compose-plugin 2>/dev/null && installed_compose=true || true
+                run_with_spinner "Installing docker-compose-plugin via dnf" bash -c "$SUDO dnf install -y -q docker-compose-plugin" && installed_compose=true || true
             elif command -v yum >/dev/null 2>&1; then
-                $SUDO yum install -y -q docker-compose-plugin 2>/dev/null && installed_compose=true || true
+                run_with_spinner "Installing docker-compose-plugin via yum" bash -c "$SUDO yum install -y -q docker-compose-plugin" && installed_compose=true || true
             fi
 
             if [ "$installed_compose" = false ]; then
@@ -316,8 +464,7 @@ ensure_dependencies() {
                 esac
                 local plugin_dir="/usr/local/lib/docker/cli-plugins"
                 $SUDO mkdir -p "$plugin_dir"
-                $SUDO curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${c_arch}" -o "${plugin_dir}/docker-compose"
-                $SUDO chmod +x "${plugin_dir}/docker-compose"
+                run_with_spinner "Downloading standalone docker-compose binary" bash -c "$SUDO curl -fsSL 'https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${c_arch}' -o '${plugin_dir}/docker-compose' && $SUDO chmod +x '${plugin_dir}/docker-compose'"
             fi
         fi
     fi
@@ -333,9 +480,9 @@ ensure_dependencies() {
         if [ "$OS" = "Linux" ]; then
             log_info "Attempting to start Docker daemon..."
             if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
-                $SUDO systemctl start docker || true
+                run_with_spinner "Starting Docker daemon service" $SUDO systemctl start docker || true
             elif command -v service >/dev/null 2>&1; then
-                $SUDO service docker start || true
+                run_with_spinner "Starting Docker daemon service" $SUDO service docker start || true
             fi
         elif [ "$OS" = "Darwin" ]; then
             log_info "Attempting to launch Docker Desktop..."
@@ -746,6 +893,12 @@ collect_non_interactive_config() {
 write_files() {
     log_info "Writing configuration to ${INSTALL_DIR}..."
 
+    # Migrate temporary log to <dir>/install.log
+    if [ -n "$LOG_FILE" ] && [ -f "$LOG_FILE" ] && [ "$LOG_FILE" != "${INSTALL_DIR}/install.log" ]; then
+        cp -f "$LOG_FILE" "${INSTALL_DIR}/install.log" 2>/dev/null || true
+        LOG_FILE="${INSTALL_DIR}/install.log"
+    fi
+
     local env_file="${INSTALL_DIR}/.env"
     local compose_file="${INSTALL_DIR}/docker-compose.yml"
     local readme_file="${INSTALL_DIR}/README.txt"
@@ -913,19 +1066,14 @@ EOF
 # ------------------------------------------------------------------------------
 start_stack() {
     local compose_file="${INSTALL_DIR}/docker-compose.yml"
-    log_info "Validating compose configuration..."
-    $DOCKER compose -f "$compose_file" config -q
+    run_with_spinner "Validating Docker Compose configuration" docker_exec compose -f "$compose_file" config -q
 
-    log_info "Pulling container images..."
-    $DOCKER compose -f "$compose_file" pull
-
-    log_info "Starting runner stack in detached mode..."
-    $DOCKER compose -f "$compose_file" up -d
+    run_with_spinner "Starting container stack" docker_exec compose -f "$compose_file" up -d
 
     log_info "Current container status:"
-    $DOCKER compose -f "$compose_file" ps
+    docker_exec compose -f "$compose_file" ps
 
-    log_info "Monitoring runner registration logs for up to 30 seconds..."
+    log_info "Monitoring runner registration logs (up to 30s)..."
     local elapsed=0
     local max_wait=30
     local all_done=false
@@ -937,6 +1085,19 @@ start_stack() {
         i=$((i + 1))
     done
 
+    local is_interactive_tty=false
+    if [ -t 1 ] && [ "$NON_INTERACTIVE" = false ]; then
+        is_interactive_tty=true
+    fi
+
+    local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local spin_idx=0
+    local last_notice=0
+
+    if [ "$is_interactive_tty" = true ]; then
+        printf "\033[?25l"
+    fi
+
     while [ "$elapsed" -lt "$max_wait" ]; do
         all_done=true
         local k=1
@@ -944,16 +1105,42 @@ start_stack() {
             local idx=$((k - 1))
             if [ "${runner_status[idx]}" = "STARTING" ]; then
                 local logs
-                logs="$($DOCKER compose -f "$compose_file" logs --tail 30 "runner-${k}" 2>&1 || true)"
+                logs="$(docker_exec compose -f "$compose_file" logs --tail 30 "runner-${k}" 2>&1 || true)"
                 if echo "$logs" | grep -qi "Listening for Jobs"; then
-                    runner_status[idx]="ONLINE"
-                    log_info "Runner #${k} (runner-${k}): Registered and Listening for Jobs!"
-                elif echo "$logs" | grep -qiE "Http response code: (NotFound|Unauthorized)|Http response code: 404|Http response code: 401|Failed to create a session|Failed: Ensure the token is valid"; then
-                    runner_status[idx]="FAILED"
-                    log_warn "Runner #${k} (runner-${k}): Registration failed (invalid or expired token)."
+                    runner_status[idx]="OK: Listening for Jobs"
+                    if [ "$is_interactive_tty" = true ]; then
+                        printf "\r${COLOR_GREEN}✓${COLOR_RESET} Runner #%d registered and listening for jobs! \033[K\n" "$k"
+                    else
+                        printf "  ✓ Runner #%d registered and listening for jobs!\n" "$k"
+                    fi
+                elif echo "$logs" | grep -qiE "Http response code: (NotFound|404)"; then
+                    runner_status[idx]="FAIL: Registration failed (404 Not Found - invalid token)"
+                    if [ "$is_interactive_tty" = true ]; then
+                        printf "\r${COLOR_RED}✗${COLOR_RESET} Runner #%d registration failed (404 Not Found) \033[K\n" "$k"
+                    else
+                        printf "  ✗ Runner #%d registration failed (404 Not Found)\n" "$k"
+                    fi
+                elif echo "$logs" | grep -qiE "Http response code: (Unauthorized|401)"; then
+                    runner_status[idx]="FAIL: Registration failed (401 Unauthorized)"
+                    if [ "$is_interactive_tty" = true ]; then
+                        printf "\r${COLOR_RED}✗${COLOR_RESET} Runner #%d registration failed (401 Unauthorized) \033[K\n" "$k"
+                    else
+                        printf "  ✗ Runner #%d registration failed (401 Unauthorized)\n" "$k"
+                    fi
+                elif echo "$logs" | grep -qi "Failed to create a session"; then
+                    runner_status[idx]="FAIL: Failed to create runner session"
+                    if [ "$is_interactive_tty" = true ]; then
+                        printf "\r${COLOR_RED}✗${COLOR_RESET} Runner #%d failed to create session \033[K\n" "$k"
+                    else
+                        printf "  ✗ Runner #%d failed to create session\n" "$k"
+                    fi
                 elif echo "$logs" | grep -qi "Existing runner configuration detected"; then
-                    runner_status[idx]="ONLINE"
-                    log_info "Runner #${k} (runner-${k}): Credentials loaded from volume and running."
+                    runner_status[idx]="OK: Registered (credentials loaded from volume)"
+                    if [ "$is_interactive_tty" = true ]; then
+                        printf "\r${COLOR_GREEN}✓${COLOR_RESET} Runner #%d loaded from volume! \033[K\n" "$k"
+                    else
+                        printf "  ✓ Runner #%d loaded from volume!\n" "$k"
+                    fi
                 else
                     all_done=false
                 fi
@@ -965,8 +1152,32 @@ start_stack() {
             break
         fi
 
-        sleep 3
-        elapsed=$((elapsed + 3))
+        if [ "$is_interactive_tty" = true ]; then
+            printf "\r${COLOR_BLUE}%s${COLOR_RESET} Waiting for runner registration (%ds/%ds)... \033[K" "${spin_chars[spin_idx]}" "$elapsed" "$max_wait"
+            spin_idx=$(( (spin_idx + 1) % 10 ))
+            sleep 0.5
+            elapsed=$((elapsed + 1))
+        else
+            sleep 2
+            elapsed=$((elapsed + 2))
+            if [ $((elapsed - last_notice)) -ge 10 ]; then
+                printf "  ... still waiting for runner registration (%ds)\n" "$elapsed"
+                last_notice="$elapsed"
+            fi
+        fi
+    done
+
+    if [ "$is_interactive_tty" = true ]; then
+        printf "\033[?25h\r\033[K"
+    fi
+
+    local n=1
+    while [ "$n" -le "$RUNNER_COUNT" ]; do
+        local n_idx=$((n - 1))
+        if [ "${runner_status[n_idx]}" = "STARTING" ]; then
+            runner_status[n_idx]="WARN: Timed out waiting for registration after 30s"
+        fi
+        n=$((n + 1))
     done
 
     printf "\n================ Final Deployment Status ================\n"
@@ -974,15 +1185,15 @@ start_stack() {
     local m=1
     while [ "$m" -le "$RUNNER_COUNT" ]; do
         local m_idx=$((m - 1))
-        local st="${runner_status[$m_idx]}"
-        local r_url="${RUNNER_URLS[$m_idx]}"
-        local color="${COLOR_YELLOW}"
-        if [ "$st" = "ONLINE" ]; then
-            color="${COLOR_GREEN}"
-        elif [ "$st" = "FAILED" ]; then
-            color="${COLOR_RED}"
+        local st="${runner_status[m_idx]}"
+        local r_url="${RUNNER_URLS[m_idx]}"
+        if [[ "$st" == OK:* ]]; then
+            printf "  Runner #%d: ${COLOR_GREEN}✓ %s${COLOR_RESET} (%s)\n" "$m" "$st" "$r_url"
+        elif [[ "$st" == FAIL:* ]]; then
+            printf "  Runner #%d: ${COLOR_RED}✗ %s${COLOR_RESET} (%s)\n" "$m" "$st" "$r_url"
+        else
+            printf "  Runner #%d: ${COLOR_YELLOW}! %s${COLOR_RESET} (%s)\n" "$m" "$st" "$r_url"
         fi
-        printf "  Runner #%d: ${color}%-8s${COLOR_RESET} (%s)\n" "$m" "$st" "$r_url"
         printf "    Settings page: %s/settings/actions/runners\n" "${r_url%/}"
         m=$((m + 1))
     done
@@ -1012,7 +1223,7 @@ do_uninstall() {
     fi
 
     log_info "Stopping containers in ${INSTALL_DIR}..."
-    $DOCKER compose -f "$compose_file" down || true
+    docker_exec compose -f "$compose_file" down || true
 
     local remove_volumes=false
     if [ "$NON_INTERACTIVE" = true ]; then
@@ -1027,7 +1238,7 @@ do_uninstall() {
 
     if [ "$remove_volumes" = true ]; then
         log_info "Removing persistent Docker volumes..."
-        $DOCKER compose -f "$compose_file" down -v --remove-orphans || true
+        docker_exec compose -f "$compose_file" down -v --remove-orphans || true
     fi
 
     log_info "Uninstall complete. Configuration and files remain in ${INSTALL_DIR}."
@@ -1128,7 +1339,17 @@ parse_args() {
 main() {
     parse_args "$@"
 
-    detect_system
+    print_banner
+
+    # Handle uninstall flow
+    if [ "$DO_UNINSTALL" = true ]; then
+        step_header "1/2" "Checking system"
+        detect_system
+        ensure_dependencies
+        step_header "2/2" "Uninstalling stack"
+        do_uninstall
+        exit 0
+    fi
 
     # If interactive mode is requested, ensure we have a TTY available
     if [ "$NON_INTERACTIVE" = false ] && [ ! -t 0 ] && [ ! -c /dev/tty ]; then
@@ -1136,27 +1357,33 @@ main() {
         exit 1
     fi
 
-    # Handle uninstall flow
-    if [ "$DO_UNINSTALL" = true ]; then
-        ensure_dependencies
-        do_uninstall
-        exit 0
-    fi
+    step_header "1/6" "Checking system"
+    detect_system
 
+    step_header "2/6" "Verifying Docker environment"
     ensure_dependencies
 
+    step_header "3/6" "Collecting configuration"
     if [ "$NON_INTERACTIVE" = true ]; then
         collect_non_interactive_config
     else
         collect_interactive_config
     fi
 
+    step_header "4/6" "Writing files"
     write_files
 
     if [ "$NO_START" = false ]; then
+        step_header "5/6" "Pulling images"
+        log_info "Running 'docker compose pull' (showing native Docker progress)..."
+        docker_exec compose -f "${INSTALL_DIR}/docker-compose.yml" pull
+
+        step_header "6/6" "Starting runners"
         start_stack
     else
-        log_info "Skipping stack start (--no-start specified). Files are ready in ${INSTALL_DIR}."
+        step_header "5/6" "Pulling images (skipped: --no-start)"
+        step_header "6/6" "Starting runners (skipped: --no-start)"
+        log_info "Files are ready in ${INSTALL_DIR}."
     fi
 
     log_info "Installer completed successfully."
