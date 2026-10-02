@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-runner
+  namespace: default
+  labels:
+    app: github-runner-cluster
+spec:
+  clusterIP: None
+  selector:
+    app: github-runner-cluster
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: github-runner-cluster
+  namespace: default
+  labels:
+    app: github-runner-cluster
+spec:
+  serviceName: "github-runner"
+  replicas: 2
+  selector:
+    matchLabels:
+      app: github-runner-cluster
+  template:
+    metadata:
+      labels:
+        app: github-runner-cluster
+    spec:
+      containers:
+        - name: runner
+          image: ghcr.io/your-org/github-runner:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: github-runner-config
+            - secretRef:
+                name: github-runner-secret
+          volumeMounts:
+            - name: runner-data
+              mountPath: /runner
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+      volumes:
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+  volumeClaimTemplates:
+    - metadata:
+        name: runner-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi

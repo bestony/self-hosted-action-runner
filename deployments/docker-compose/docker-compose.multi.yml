@@ -1,0 +1,53 @@
+services:
+  runner-org:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: github-runner:local
+    container_name: github-runner-org
+    restart: unless-stopped
+    environment:
+      - RUNNER_URL=${ORG_RUNNER_URL}
+      - RUNNER_TOKEN=${ORG_RUNNER_TOKEN}
+      - RUNNER_NAME=${ORG_RUNNER_NAME:-}
+      - RUNNER_NAME_PREFIX=${ORG_RUNNER_NAME_PREFIX:-org-runner-}
+      - RUNNER_LABELS=${ORG_RUNNER_LABELS:-org,docker}
+      - RUNNER_GROUP=${ORG_RUNNER_GROUP:-Default}
+      - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
+      - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
+    volumes:
+      - runner_org_data:/runner
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4096M
+
+  runner-repo:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: github-runner:local
+    container_name: github-runner-repo
+    restart: unless-stopped
+    environment:
+      - RUNNER_URL=${REPO_RUNNER_URL}
+      - RUNNER_TOKEN=${REPO_RUNNER_TOKEN}
+      - RUNNER_NAME=${REPO_RUNNER_NAME:-}
+      - RUNNER_NAME_PREFIX=${REPO_RUNNER_NAME_PREFIX:-repo-runner-}
+      - RUNNER_LABELS=${REPO_RUNNER_LABELS:-repo,docker}
+      - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
+      - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
+    volumes:
+      - runner_repo_data:/runner
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4096M
+
+volumes:
+  runner_org_data:
+  runner_repo_data:
