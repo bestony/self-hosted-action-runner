@@ -116,14 +116,13 @@ To add another repository runner (for example, `runner-repo-c`):
    REPO_C_TOKEN=YOUR_REPO_C_TOKEN
    REPO_C_NAME_PREFIX=repo-c-
    REPO_C_LABELS=self-hosted,linux,docker
-   REPO_C_WORKDIR=/tmp/github-runner/repo-c-work
+   REPO_C_WORKDIR=${PWD}/work/runner-repo-c
    ```
 
 2. **Add service block** to `docker-compose.yml`:
    ```yaml
      runner-repo-c:
        <<: *runner-common
-       container_name: github-runner-repo-c
        environment:
          - RUNNER_URL=${REPO_C_URL}
          - RUNNER_TOKEN=${REPO_C_TOKEN}
@@ -131,14 +130,14 @@ To add another repository runner (for example, `runner-repo-c`):
          - RUNNER_NAME_PREFIX=${REPO_C_NAME_PREFIX:-repo-c-}
          - RUNNER_LABELS=${REPO_C_LABELS:-self-hosted,linux,docker}
          - RUNNER_GROUP=${REPO_C_GROUP:-}
-         - RUNNER_WORKDIR=${REPO_C_WORKDIR:-/tmp/github-runner/repo-c-work}
+         - RUNNER_WORKDIR=${REPO_C_WORKDIR:-${PWD}/work/runner-repo-c}
          - ACTIONS_RESULTS_URL=${CACHE_URL:-http://cache-server:3000}/
          - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
          - LOG_LEVEL=${LOG_LEVEL:-info}
        volumes:
          - runner_c_data:/runner
          - /var/run/docker.sock:/var/run/docker.sock
-         - ${REPO_C_WORKDIR:-/tmp/github-runner/repo-c-work}:${REPO_C_WORKDIR:-/tmp/github-runner/repo-c-work}
+         - ${REPO_C_WORKDIR:-${PWD}/work/runner-repo-c}:${REPO_C_WORKDIR:-${PWD}/work/runner-repo-c}
    ```
 
 3. **Add volume entry** under `volumes:` in `docker-compose.yml`:
@@ -181,3 +180,14 @@ To remove stopped containers and persistent volumes (deletes runner credentials)
 ```bash
 docker compose down -v
 ```
+
+---
+
+## Running Multiple Independent Stacks on One Host
+
+To run several independent runner stacks on the same machine without collisions:
+- **Project Isolation**: Set `COMPOSE_PROJECT_NAME` in each stack's `.env` (or pass `-p <project>` to `docker compose`).
+- **No Container Name Collisions**: All `container_name` entries have been removed so Compose assigns unique names automatically.
+- **Port Isolation**: In default internal mode, `cache-server` does not bind host ports. In host-IP mode, specify a unique `CACHE_PORT` per stack in `.env`.
+- **Workspace Isolation**: Workspaces default to `${PWD}/work/<runner>`. Ensure each stack runs in its own directory or defines unique absolute paths.
+- **Volume Isolation**: Named volumes (`runner_a_data`, `runner_b_data`, `cache_data`) are scoped to the project name automatically.

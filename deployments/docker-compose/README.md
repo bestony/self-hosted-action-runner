@@ -62,3 +62,13 @@ docker compose -f docker-compose.multi.yml logs -f
   ```bash
   docker system prune -af --filter "until=168h"
   ```
+
+---
+
+## Running Multiple Independent Stacks on One Host
+
+To run multiple independent stacks on the same host machine without collisions:
+- **Project Isolation**: Set `COMPOSE_PROJECT_NAME` in `.env` (or pass `-p <project>` to `docker compose`).
+- **No Static Container Names**: `container_name` attributes are removed; Compose names containers dynamically.
+- **Isolated Workspaces**: Runner workspaces default to `${PWD}/work/<runner>`. Ensure each stack runs from its own directory or sets explicit absolute paths in `.env`.
+- **Isolated Volumes & Networks**: Docker Compose automatically isolates named volumes and bridge networks under each project name.

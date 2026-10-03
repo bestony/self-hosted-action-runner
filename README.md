@@ -120,20 +120,19 @@ You can manage the runner and the cache server together with Docker Compose.
 services:
   runner:
     image: bestony/self-hosted-runner:latest
-    container_name: github-runner
     restart: unless-stopped
     environment:
       - RUNNER_URL=${RUNNER_URL}
       - RUNNER_TOKEN=${RUNNER_TOKEN}
       - RUNNER_NAME=${RUNNER_NAME:-}
       - RUNNER_LABELS=${RUNNER_LABELS:-self-hosted,docker,linux}
-      - RUNNER_WORKDIR=${RUNNER_WORKDIR:-/tmp/github-runner/work}
+      - RUNNER_WORKDIR=${RUNNER_WORKDIR:-${PWD}/work/runner}
       - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - runner_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${RUNNER_WORKDIR:-/tmp/github-runner/work}:${RUNNER_WORKDIR:-/tmp/github-runner/work}
+      - ${RUNNER_WORKDIR:-${PWD}/work/runner}:${RUNNER_WORKDIR:-${PWD}/work/runner}
     depends_on:
       cache-server:
         condition: service_started
@@ -141,10 +140,9 @@ services:
 
   cache-server:
     image: ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0
-    container_name: github-actions-cache-server
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+#   ports:
+#     - "${CACHE_PORT:-3000}:3000"
     environment:
       API_BASE_URL: ${CACHE_API_BASE_URL:-http://cache-server:3000}
       STORAGE_DRIVER: filesystem
@@ -184,7 +182,20 @@ volumes:
 
 ---
 
-## 4. More Information
+## 4. Running Multiple Independent Stacks on One Host
+
+You can run multiple independent runner stacks on the same host machine (for different teams, environments, or projects) without collisions:
+
+- **Project Names**: Each stack uses a unique Docker Compose project name (via `COMPOSE_PROJECT_NAME` in `.env` or top-level `name:` in `docker-compose.yml`). The installer automatically generates deterministic, collision-free project names (`ghr-<dir>-<sha256:8>`).
+- **Container Names**: Static `container_name` attributes are omitted. Containers are dynamically named `<project>-<service>-<index>` by Compose.
+- **Network Isolation**: Each stack creates an isolated bridge network, preventing DNS or routing cross-talk.
+- **Volume & Credential Isolation**: Named volumes (e.g. `runner_data`, `cache_data`) are scoped per project, ensuring runner credentials and SQLite databases never conflict.
+- **Workspace Parity**: Job workspaces use directory-scoped paths (`${PWD}/work/<runner>` or `<install_dir>/work/runner-<n>`), ensuring Docker-outside-of-Docker (DooD) host mounts do not collide.
+- **Cache Ports**: In default internal mode, runners reach cache services over the internal project network without binding any host ports. In host-IP mode, distinct host ports are published.
+
+---
+
+## 5. More Information
 
 For comprehensive documentation, refer to:
 - [development.md](development.md): Architecture details, environment variable reference, DooD workspace setup, multi-platform image builds, Kubernetes / CapRover deployments, and CI/CD automation.

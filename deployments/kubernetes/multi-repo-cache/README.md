@@ -35,8 +35,7 @@ This directory provides declarative Kustomize manifests to deploy multiple GitHu
 
 - **Namespace**: `github-runners` isolates the CI workload.
 - **Cache Server**: Singleton Deployment with `strategy: Recreate` mounted to a 20Gi ReadWriteOnce PersistentVolumeClaim. Exposes port 3000 via a ClusterIP Service.
-- **Runner Workloads**: StatefulSets per repository with `volumeClaimTemplates` to provide dynamic, isolated persistent storage for each runner replica (`/runner`).
-- **Workspace Parity**: `hostPath` bind mounts for `/tmp/github-runner/work-*` to guarantee host path parity for Docker-outside-of-Docker (DooD).
+- **Workspace Parity**: `hostPath` bind mounts scoped by namespace and StatefulSet (`/var/lib/github-runner/<namespace>-<statefulset>`) to guarantee host path parity for Docker-outside-of-Docker (DooD) without multi-instance collisions.
 
 ---
 
@@ -122,7 +121,7 @@ To add a runner for Repository C (`runner-repo-c`):
    - Labels and app selectors: `runner-repo-c`
    - `RUNNER_URL`: Target GitHub repository URL
    - `RUNNER_NAME_PREFIX`: `repo-c-`
-   - `RUNNER_WORKDIR` and volume mount: `/tmp/github-runner/work-repo-c`
+   - `RUNNER_WORKDIR` and volume mount: `/var/lib/github-runner/github-runners-runner-repo-c`
 
 2. **Register in `kustomization.yaml`**:
    Add `- runner-repo-c.yaml` to the `resources` list.
