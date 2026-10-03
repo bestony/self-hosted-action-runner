@@ -31,7 +31,47 @@ curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/m
 - `--debug`: Enable verbose debug logging.
 - `-h, --help`: Show help text and options.
 
+### Interactive Example (Default)
+
+Run the command without any `GHR_*` variables or flags. The installer reads your answers from the terminal (`/dev/tty`), so this works through `curl | bash`. Press Enter to accept a default value. The token input is hidden.
+
+```text
+$ curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install.sh | bash
+
+==> [3/6] Collecting configuration
+Enter installation directory [default: /home/me/github-runner]:
+
+--- Configuring Runner #1 ---
+GitHub Repository or Organization URL (e.g. https://github.com/org/repo): https://github.com/my-org/repo-a
+GitHub Runner Registration Token:
+Runner name prefix [default: repo-a-]:
+Runner labels (comma-separated) [default: self-hosted,linux,docker]:
+Add another repository/org runner? [y/N]: y
+
+--- Configuring Runner #2 ---
+GitHub Repository or Organization URL (e.g. https://github.com/org/repo): https://github.com/my-org
+GitHub Runner Registration Token:
+Runner name prefix [default: my-org-]:
+Runner labels (comma-separated) [default: self-hosted,linux,docker]:
+Add another repository/org runner? [y/N]:
+
+--- Cache Server Configuration ---
+Enable shared GitHub Actions cache server? [Y/n]:
+Select cache URL mode: [1] Internal (http://cache-server:3000) or [2] Host IP (reachable by container jobs) [default: 1]:
+Runner container image [default: ghcr.io/bestony/self-hosted-action-runner:latest]:
+
+(configuration summary, tokens masked)
+Write configuration and continue? [Y/n]:
+```
+
+Get a registration token from **Settings > Actions > Runners > New self-hosted runner** of the repository or organization. The token expires after 1 hour, but the runner needs it only for the first registration.
+
+If you run the installer again with the same directory, it shows the configured runners and asks you to choose `[A]dd runners`, `[R]econfigure from scratch` or `[Q]uit`.
+
 ### Non-Interactive Example (CI / Automation)
+
+Use `--non-interactive` only when no person is at the terminal. In this mode the installer reads the `GHR_*` variables and does not ask questions. Without `--non-interactive`, the installer asks for all values and ignores the `GHR_*` variables (only `GHR_DEBUG=1` applies in both modes).
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install.sh | \
   GHR_RUNNER_1_URL="https://github.com/my-org/repo-a" \
@@ -195,7 +235,28 @@ You can run multiple independent runner stacks on the same host machine (for dif
 
 ---
 
-## 5. More Information
+## 5. Runner Environment and Job Hooks
+
+The runner process runs as the unprivileged `runner` user with `HOME=/home/runner`, so `git config --global` and `actions/checkout` work.
+
+The image includes these tools for jobs:
+- Docker CLI with the Buildx and Compose plugins. Jobs use the host Docker daemon through `/var/run/docker.sock`.
+- GitHub CLI (`gh`). Give it a token in the job, for example `env: GH_TOKEN: ${{ github.token }}`.
+- `git`, `curl`, `jq`, `zstd`.
+
+Jobs that start containers through the host Docker socket often run them as root. Those containers can write root-owned files into the workspace, and the next `actions/checkout` then fails with `EACCES: permission denied`. To prevent this, the image enables a runner job hook (`/opt/runner-hooks/fix-workspace-ownership.sh`). Before and after each job, the hook gives the job workspace and `RUNNER_TEMP` back to the `runner` user.
+
+| Variable | Default | Description |
+|---|---|---|
+| `FIX_WORKSPACE_OWNERSHIP` | `true` | Set to `false` to disable the ownership hook. |
+| `ACTIONS_RUNNER_HOOK_JOB_STARTED` | ownership hook | Set your own script to replace the job-started hook. |
+| `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` | ownership hook | Set your own script to replace the job-completed hook. |
+
+To run matrix jobs in parallel, register more than one runner: run the installer again in the same directory and choose `[A]dd runners`. One runner executes one job at a time.
+
+---
+
+## 6. More Information
 
 For comprehensive documentation, refer to:
 - [development.md](development.md): Architecture details, environment variable reference, DooD workspace setup, multi-platform image builds, Kubernetes / CapRover deployments, and CI/CD automation.
