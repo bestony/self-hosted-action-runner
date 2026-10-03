@@ -51,10 +51,11 @@ assert_failure() {
 
 get_file_perms() {
     local target="$1"
-    if stat -f "%OLp" "$target" 2>/dev/null; then
+    # GNU stat first: on Linux `stat -f` means filesystem status and succeeds with unrelated output.
+    if stat -c "%a" "$target" 2>/dev/null; then
         return 0
     fi
-    stat -c "%a" "$target" 2>/dev/null || echo "unknown"
+    stat -f "%OLp" "$target" 2>/dev/null || echo "unknown"
 }
 
 printf "==================================================\n"
