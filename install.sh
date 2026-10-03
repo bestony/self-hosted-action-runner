@@ -12,7 +12,7 @@ set -Eeuo pipefail
 # ------------------------------------------------------------------------------
 INSTALLER_VERSION="1.0.0"
 DEFAULT_IMAGE="ghcr.io/bestony/self-hosted-action-runner:latest"
-DEFAULT_CACHE_IMAGE="ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0"
+DEFAULT_CACHE_IMAGE="ghcr.io/falcondev-oss/github-actions-cache-server:latest"
 
 INSTALL_DIR=""
 NON_INTERACTIVE=false
@@ -47,6 +47,7 @@ CACHE_ENABLED=true
 CACHE_URL="http://cache-server:3000"
 CACHE_PORT=""
 RUNNER_IMAGE="${DEFAULT_IMAGE}"
+CACHE_IMAGE="${DEFAULT_CACHE_IMAGE}"
 
 # Colors (only if stdout is a TTY)
 if [ -t 1 ]; then
@@ -829,6 +830,7 @@ collect_interactive_config() {
         CACHE_URL="$(grep -E '^CACHE_URL=' "$env_file" 2>/dev/null | cut -d= -f2- || echo 'http://cache-server:3000')"
         CACHE_PORT="$(grep -E '^CACHE_PORT=' "$env_file" 2>/dev/null | cut -d= -f2 || true)"
         RUNNER_IMAGE="$(grep -E '^RUNNER_IMAGE=' "$env_file" 2>/dev/null | cut -d= -f2- || echo "$DEFAULT_IMAGE")"
+        CACHE_IMAGE="$(grep -E '^CACHE_IMAGE=' "$env_file" 2>/dev/null | cut -d= -f2- || echo "$DEFAULT_CACHE_IMAGE")"
     else
         RUNNER_COUNT=0
         RUNNER_URLS=()
@@ -1010,6 +1012,7 @@ collect_non_interactive_config() {
         CACHE_URL="$(grep -E '^CACHE_URL=' "$env_file" 2>/dev/null | cut -d= -f2- || echo 'http://cache-server:3000')"
         CACHE_PORT="$(grep -E '^CACHE_PORT=' "$env_file" 2>/dev/null | cut -d= -f2 || true)"
         RUNNER_IMAGE="$(grep -E '^RUNNER_IMAGE=' "$env_file" 2>/dev/null | cut -d= -f2- || echo "$DEFAULT_IMAGE")"
+        CACHE_IMAGE="$(grep -E '^CACHE_IMAGE=' "$env_file" 2>/dev/null | cut -d= -f2- || echo "$DEFAULT_CACHE_IMAGE")"
     fi
 
     # Read runner configurations from environment variables
@@ -1108,6 +1111,7 @@ collect_non_interactive_config() {
             fi
         fi
         RUNNER_IMAGE="${GHR_IMAGE:-${RUNNER_IMAGE:-$DEFAULT_IMAGE}}"
+        CACHE_IMAGE="${GHR_CACHE_IMAGE:-${CACHE_IMAGE:-$DEFAULT_CACHE_IMAGE}}"
     fi
 
     log_info "Non-interactive configuration loaded (${RUNNER_COUNT} runners, Cache: ${CACHE_ENABLED})."
@@ -1147,6 +1151,7 @@ write_files() {
         echo "COMPOSE_PROJECT_NAME=${PROJECT_NAME}"
         echo "RUNNER_COUNT=${RUNNER_COUNT}"
         echo "RUNNER_IMAGE=${RUNNER_IMAGE}"
+        echo "CACHE_IMAGE=${CACHE_IMAGE}"
         echo "CACHE_ENABLED=${CACHE_ENABLED}"
         echo "CACHE_URL=${CACHE_URL}"
         echo "CACHE_PORT=${CACHE_PORT}"
@@ -1176,7 +1181,7 @@ write_files() {
         if [ "$CACHE_ENABLED" = true ]; then
             cat <<EOF
   cache-server:
-    image: ${DEFAULT_CACHE_IMAGE}
+    image: \${CACHE_IMAGE:-${DEFAULT_CACHE_IMAGE}}
     restart: unless-stopped
 EOF
             if [ -n "$CACHE_PORT" ] && [ "$CACHE_PORT" != "0" ]; then
@@ -1565,6 +1570,7 @@ Non-Interactive Environment Variables:
   GHR_CACHE_URL            Base cache server URL (default: http://cache-server:3000)
   GHR_CACHE_PORT           Published host port for cache server in host mode
   GHR_IMAGE                Custom runner container image
+  GHR_CACHE_IMAGE          Custom cache server container image (default: ghcr.io/falcondev-oss/github-actions-cache-server:latest)
   GHR_INSTALL_DOCKER       Allow automatic Docker install: yes (default) or no
   GHR_MODE                 Install mode: new (default), add, or reconfigure
   GHR_UNINSTALL_VOLUMES    With --uninstall: set to 'yes' to delete volumes without prompt

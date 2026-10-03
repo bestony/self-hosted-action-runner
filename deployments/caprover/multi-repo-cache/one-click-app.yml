@@ -62,7 +62,7 @@ caproverOneClickApp:
 
         - id: $$cap_cache_image
           label: Cache Server Container Image
-          defaultValue: ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0
+          defaultValue: ghcr.io/falcondev-oss/github-actions-cache-server:latest
           description: Docker image for GitHub Actions cache server
           validRegex: /^([^\s])+$/
 

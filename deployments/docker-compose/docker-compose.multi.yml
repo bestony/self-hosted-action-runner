@@ -3,7 +3,7 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: github-runner:local
+    image: ${RUNNER_IMAGE:-ghcr.io/bestony/self-hosted-action-runner:latest}
     restart: unless-stopped
     environment:
       - RUNNER_URL=${ORG_RUNNER_URL}
@@ -29,7 +29,7 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: github-runner:local
+    image: ${RUNNER_IMAGE:-ghcr.io/bestony/self-hosted-action-runner:latest}
     restart: unless-stopped
     environment:
       - RUNNER_URL=${REPO_RUNNER_URL}

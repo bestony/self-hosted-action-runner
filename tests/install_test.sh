@@ -115,6 +115,16 @@ assert_success "$COMPOSE_EC" "docker compose config -q passes on generated confi
 COUNT="$(grep -E '^RUNNER_COUNT=' "${TEST1_DIR}/.env" | cut -d= -f2)"
 assert_equals "2" "$COUNT" "RUNNER_COUNT is 2 in generated .env"
 
+# Verify default images use :latest tag
+set +e
+grep -q "ghcr.io/falcondev-oss/github-actions-cache-server:latest" "${TEST1_DIR}/docker-compose.yml"
+HAS_CACHE_LATEST=$?
+grep -q "RUNNER_IMAGE=ghcr.io/bestony/self-hosted-action-runner:latest" "${TEST1_DIR}/.env"
+HAS_RUNNER_LATEST=$?
+set -e
+assert_success "$HAS_CACHE_LATEST" "Default cache server image uses latest tag in docker-compose.yml"
+assert_success "$HAS_RUNNER_LATEST" "Default runner image uses latest tag in .env"
+
 # ------------------------------------------------------------------------------
 # Test 2: Re-run with "add" semantics (GHR_MODE=add)
 # ------------------------------------------------------------------------------

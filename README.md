@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/m
 ### What It Does
 - **Preflight & Dependencies**: Checks for Docker Engine, Docker Compose v2, and reachable daemon. Offers automated installation on Linux (via `get.docker.com`) and Homebrew setup on macOS.
 - **Interactive Configuration**: Prompts for repository/organization URLs, hidden registration tokens, runner prefixes, and labels. Supports configuring multiple runners in one deployment.
-- **Shared Cache Server**: Optionally deploys and configures `ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0` with automatic DooD host IP detection.
+- **Shared Cache Server**: Optionally deploys and configures `ghcr.io/falcondev-oss/github-actions-cache-server:latest` with automatic DooD host IP detection.
 - **Deterministic Compose & Security**: Generates `docker-compose.yml` and `.env` with strict `chmod 600` permissions. Tokens are never inlined into Compose files.
 - **Automatic Health & Log Verification**: Starts the stack and tails registration logs to verify runner connectivity with GitHub.
 
@@ -179,7 +179,7 @@ services:
         required: false
 
   cache-server:
-    image: ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0
+    image: ghcr.io/falcondev-oss/github-actions-cache-server:latest
     restart: unless-stopped
 #   ports:
 #     - "${CACHE_PORT:-3000}:3000"

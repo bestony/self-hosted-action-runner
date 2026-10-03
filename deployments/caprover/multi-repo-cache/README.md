@@ -6,7 +6,7 @@ This template deploys two GitHub Actions self-hosted runners and a shared GitHub
 
 ## Architecture Overview
 
-- **`$$cap_appname-cache`**: A shared cache server container running `ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0` with SQLite storage backed by a persistent volume (`$$cap_appname-cache-data`). Accessible to other CapRover services on the internal overlay network as `http://srv-captain--$$cap_appname-cache:3000/`.
+- **`$$cap_appname-cache`**: A shared cache server container running `ghcr.io/falcondev-oss/github-actions-cache-server:latest` with SQLite storage backed by a persistent volume (`$$cap_appname-cache-data`). Accessible to other CapRover services on the internal overlay network as `http://srv-captain--$$cap_appname-cache:3000/`.
 - **`$$cap_appname-runner-a`**: Dedicated runner for Repository/Org A, with isolated volume `$$cap_appname-runner-a-data:/runner`, DooD `/var/run/docker.sock`, and host workspace parity at `/tmp/github-runner/$$cap_appname-runner-a`.
 - **`$$cap_appname-runner-b`**: Dedicated runner for Repository/Org B, with isolated volume `$$cap_appname-runner-b-data:/runner`, DooD `/var/run/docker.sock`, and host workspace parity at `/tmp/github-runner/$$cap_appname-runner-b`.
 

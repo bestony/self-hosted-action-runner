@@ -29,7 +29,7 @@ spec:
     spec:
       containers:
         - name: cache-server
-          image: ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0
+          image: ghcr.io/falcondev-oss/github-actions-cache-server:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
