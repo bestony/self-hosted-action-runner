@@ -409,6 +409,63 @@ else
     FAILED=$((FAILED + 1))
 fi
 
+# ------------------------------------------------------------------------------
+# Test 11: Multi-instance concurrency (GHR_RUNNER_1_INSTANCES=3)
+# ------------------------------------------------------------------------------
+printf "\nTest 11: Multi-instance configuration (GHR_RUNNER_1_INSTANCES=3)\n"
+TEST11_DIR="$(mktemp -d /tmp/ghr-test-11-XXXXXX)"
+
+set +e
+GHR_RUNNER_1_URL="https://github.com/my-org/concurrent-repo" \
+GHR_RUNNER_1_TOKEN="TOKEN_MULTI_123" \
+GHR_RUNNER_1_NAME_PREFIX="multi-runner-" \
+GHR_RUNNER_1_INSTANCES=3 \
+bash "$INSTALL_SH" --non-interactive --no-start --dir "$TEST11_DIR" >/dev/null 2>&1
+TEST11_EC=$?
+set -e
+
+assert_success "$TEST11_EC" "install.sh runs successfully with GHR_RUNNER_1_INSTANCES=3"
+
+# Verify runner count is 3
+COUNT_MULTI="$(grep -E '^RUNNER_COUNT=' "${TEST11_DIR}/.env" | cut -d= -f2)"
+assert_equals "3" "$COUNT_MULTI" "RUNNER_COUNT is 3 in generated .env"
+
+# Verify distinct prefixes
+P1="$(grep -E '^RUNNER_1_NAME_PREFIX=' "${TEST11_DIR}/.env" | cut -d= -f2)"
+P2="$(grep -E '^RUNNER_2_NAME_PREFIX=' "${TEST11_DIR}/.env" | cut -d= -f2)"
+P3="$(grep -E '^RUNNER_3_NAME_PREFIX=' "${TEST11_DIR}/.env" | cut -d= -f2)"
+assert_equals "multi-runner-1-" "$P1" "Runner 1 prefix is multi-runner-1-"
+assert_equals "multi-runner-2-" "$P2" "Runner 2 prefix is multi-runner-2-"
+assert_equals "multi-runner-3-" "$P3" "Runner 3 prefix is multi-runner-3-"
+
+# Verify distinct volumes and workdirs in docker-compose.yml
+set +e
+grep -q "runner_1_data:/runner" "${TEST11_DIR}/docker-compose.yml"
+HAS_V1=$?
+grep -q "runner_2_data:/runner" "${TEST11_DIR}/docker-compose.yml"
+HAS_V2=$?
+grep -q "runner_3_data:/runner" "${TEST11_DIR}/docker-compose.yml"
+HAS_V3=$?
+grep -q "work/runner-1:.*work/runner-1" "${TEST11_DIR}/docker-compose.yml"
+HAS_W1=$?
+grep -q "work/runner-2:.*work/runner-2" "${TEST11_DIR}/docker-compose.yml"
+HAS_W2=$?
+grep -q "work/runner-3:.*work/runner-3" "${TEST11_DIR}/docker-compose.yml"
+HAS_W3=$?
+docker compose -f "${TEST11_DIR}/docker-compose.yml" --env-file "${TEST11_DIR}/.env" config -q
+MULTI_COMPOSE_EC=$?
+set -e
+
+assert_success "$HAS_V1" "Runner 1 has dedicated volume runner_1_data"
+assert_success "$HAS_V2" "Runner 2 has dedicated volume runner_2_data"
+assert_success "$HAS_V3" "Runner 3 has dedicated volume runner_3_data"
+assert_success "$HAS_W1" "Runner 1 has dedicated workspace work/runner-1"
+assert_success "$HAS_W2" "Runner 2 has dedicated workspace work/runner-2"
+assert_success "$HAS_W3" "Runner 3 has dedicated workspace work/runner-3"
+assert_success "$MULTI_COMPOSE_EC" "docker compose config -q passes on 3-instance compose file"
+
+rm -rf "$TEST11_DIR"
+
 # Clean up
 rm -rf "$TEST1_DIR" "$TEST2_DIR" "$BASE_TMP"
 

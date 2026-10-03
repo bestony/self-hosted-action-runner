@@ -46,6 +46,7 @@ GitHub Repository or Organization URL (e.g. https://github.com/org/repo): https:
 GitHub Runner Registration Token:
 Runner name prefix [default: repo-a-]:
 Runner labels (comma-separated) [default: self-hosted,linux,docker]:
+Number of runner instances for this target (to run jobs concurrently) [default: 1]: 2
 Add another repository/org runner? [y/N]: y
 
 --- Configuring Runner #2 ---
@@ -53,6 +54,7 @@ GitHub Repository or Organization URL (e.g. https://github.com/org/repo): https:
 GitHub Runner Registration Token:
 Runner name prefix [default: my-org-]:
 Runner labels (comma-separated) [default: self-hosted,linux,docker]:
+Number of runner instances for this target (to run jobs concurrently) [default: 1]: 1
 Add another repository/org runner? [y/N]:
 
 --- Cache Server Configuration ---
@@ -76,6 +78,7 @@ Use `--non-interactive` only when no person is at the terminal. In this mode the
 curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install.sh | \
   GHR_RUNNER_1_URL="https://github.com/my-org/repo-a" \
   GHR_RUNNER_1_TOKEN="YOUR_REPO_A_TOKEN" \
+  GHR_RUNNER_1_INSTANCES=2 \
   GHR_RUNNER_2_URL="https://github.com/my-org/repo-b" \
   GHR_RUNNER_2_TOKEN="YOUR_REPO_B_TOKEN" \
   GHR_CACHE=1 \
@@ -158,25 +161,49 @@ You can manage the runner and the cache server together with Docker Compose.
 
 ```yaml
 services:
-  runner:
+  runner-1: &runner-base
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: bestony/self-hosted-runner:latest
     restart: unless-stopped
     environment:
       - RUNNER_URL=${RUNNER_URL}
       - RUNNER_TOKEN=${RUNNER_TOKEN}
-      - RUNNER_NAME=${RUNNER_NAME:-}
-      - RUNNER_LABELS=${RUNNER_LABELS:-self-hosted,docker,linux}
-      - RUNNER_WORKDIR=${RUNNER_WORKDIR:-${PWD}/work/runner}
+      - RUNNER_NAME=${RUNNER_NAME_1:-${RUNNER_NAME:-}}
+      - RUNNER_NAME_PREFIX=${RUNNER_NAME_PREFIX_1:-${RUNNER_NAME_PREFIX:-runner-1-}}
+      - RUNNER_LABELS=${RUNNER_LABELS:-}
+      - RUNNER_GROUP=${RUNNER_GROUP:-}
+      - RUNNER_WORKDIR=${RUNNER_WORKDIR_1:-${RUNNER_WORKDIR:-${PWD}/work/runner-1}}
       - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
+      - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
-      - runner_data:/runner
+      - runner_1_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${RUNNER_WORKDIR:-${PWD}/work/runner}:${RUNNER_WORKDIR:-${PWD}/work/runner}
+      - ${RUNNER_WORKDIR_1:-${RUNNER_WORKDIR:-${PWD}/work/runner-1}}:${RUNNER_WORKDIR_1:-${RUNNER_WORKDIR:-${PWD}/work/runner-1}}
     depends_on:
       cache-server:
         condition: service_started
         required: false
+
+  runner-2:
+    <<: *runner-base
+    environment:
+      - RUNNER_URL=${RUNNER_URL}
+      - RUNNER_TOKEN=${RUNNER_TOKEN}
+      - RUNNER_NAME=${RUNNER_NAME_2:-}
+      - RUNNER_NAME_PREFIX=${RUNNER_NAME_PREFIX_2:-${RUNNER_NAME_PREFIX:-runner-2-}}
+      - RUNNER_LABELS=${RUNNER_LABELS:-}
+      - RUNNER_GROUP=${RUNNER_GROUP:-}
+      - RUNNER_WORKDIR=${RUNNER_WORKDIR_2:-${PWD}/work/runner-2}
+      - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
+      - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - runner_2_data:/runner
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${RUNNER_WORKDIR_2:-${PWD}/work/runner-2}:${RUNNER_WORKDIR_2:-${PWD}/work/runner-2}
 
   cache-server:
     image: ghcr.io/falcondev-oss/github-actions-cache-server:latest
@@ -194,9 +221,13 @@ services:
     profiles:
       - cache
       - full
+      - all
 
 volumes:
-  runner_data:
+  runner_1_data:
+  runner_2_data:
+  runner_3_data:
+  runner_4_data:
   cache_data:
 ```
 
@@ -209,15 +240,21 @@ volumes:
 2. Configure `RUNNER_URL` and `RUNNER_TOKEN` in `.env`.
 3. Start the services:
    ```bash
-   # Start runner only
+   # Start 2 concurrent runner instances (default)
    docker compose up -d
 
-   # Start runner with cache server
+   # Start single runner instance only
+   docker compose up -d runner-1
+
+   # Scale to 4 concurrent runner instances
+   docker compose --profile scale up -d
+
+   # Start runners with cache server
    docker compose --profile cache up -d
    ```
 4. View runner logs:
    ```bash
-   docker compose logs -f runner
+   docker compose logs -f runner-1 runner-2
    ```
 
 ---

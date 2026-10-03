@@ -890,15 +890,38 @@ collect_interactive_config() {
         local r_labels
         r_labels="$(prompt_input "Runner labels (comma-separated)" "self-hosted,linux,docker")"
 
-        # Workdir
-        local r_workdir="${INSTALL_DIR}/work/runner-${runner_num}"
+        # Concurrency / Instances
+        local r_instances
+        while true; do
+            r_instances="$(prompt_input "Number of runner instances for this target (to run jobs concurrently)" "1")"
+            if [[ "$r_instances" =~ ^[1-9][0-9]*$ ]]; then
+                break
+            else
+                log_error "Please enter a valid positive number (e.g. 1, 2, 4)."
+            fi
+        done
 
-        RUNNER_URLS+=("$r_url")
-        RUNNER_TOKENS+=("$r_token")
-        RUNNER_PREFIXES+=("$r_prefix")
-        RUNNER_LABELS+=("$r_labels")
-        RUNNER_WORKDIR_LIST+=("$r_workdir")
-        RUNNER_COUNT="$runner_num"
+        local inst=1
+        while [ "$inst" -le "$r_instances" ]; do
+            local next_num=$((RUNNER_COUNT + 1))
+            local inst_prefix="$r_prefix"
+            if [ "$r_instances" -gt 1 ]; then
+                if [[ "$r_prefix" == *- ]]; then
+                    inst_prefix="${r_prefix}${inst}-"
+                else
+                    inst_prefix="${r_prefix}-${inst}-"
+                fi
+            fi
+            local r_workdir="${INSTALL_DIR}/work/runner-${next_num}"
+
+            RUNNER_URLS+=("$r_url")
+            RUNNER_TOKENS+=("$r_token")
+            RUNNER_PREFIXES+=("$inst_prefix")
+            RUNNER_LABELS+=("$r_labels")
+            RUNNER_WORKDIR_LIST+=("$r_workdir")
+            RUNNER_COUNT="$next_num"
+            inst=$((inst + 1))
+        done
 
         if ! prompt_confirm "Add another repository/org runner?" "N"; then
             adding=false
@@ -1060,17 +1083,46 @@ collect_non_interactive_config() {
             exit 1
         fi
 
-        local prefix="${!var_prefix:-$(derive_prefix_from_url "$url")}"
+        local base_prefix="${!var_prefix:-$(derive_prefix_from_url "$url")}"
         local labels="${!var_labels:-self-hosted,linux,docker}"
-        local next_num=$((RUNNER_COUNT + 1))
-        local workdir="${!var_workdir:-${INSTALL_DIR}/work/runner-${next_num}}"
+        local custom_workdir="${!var_workdir:-}"
 
-        RUNNER_URLS+=("$url")
-        RUNNER_TOKENS+=("$token")
-        RUNNER_PREFIXES+=("$prefix")
-        RUNNER_LABELS+=("$labels")
-        RUNNER_WORKDIR_LIST+=("$workdir")
-        RUNNER_COUNT="$next_num"
+        local var_instances="GHR_RUNNER_${scan_idx}_INSTANCES"
+        local instances="${!var_instances:-${GHR_RUNNER_INSTANCES:-${GHR_INSTANCES:-1}}}"
+        if ! [[ "$instances" =~ ^[1-9][0-9]*$ ]]; then
+            log_warn "Invalid instances value '${instances}' for runner ${scan_idx}. Defaulting to 1."
+            instances=1
+        fi
+
+        local inst=1
+        while [ "$inst" -le "$instances" ]; do
+            local next_num=$((RUNNER_COUNT + 1))
+            local inst_prefix="$base_prefix"
+            if [ "$instances" -gt 1 ]; then
+                if [[ "$base_prefix" == *- ]]; then
+                    inst_prefix="${base_prefix}${inst}-"
+                else
+                    inst_prefix="${base_prefix}-${inst}-"
+                fi
+            fi
+
+            local workdir
+            if [ -n "$custom_workdir" ] && [ "$instances" -eq 1 ]; then
+                workdir="$custom_workdir"
+            elif [ -n "$custom_workdir" ]; then
+                workdir="${custom_workdir}-${inst}"
+            else
+                workdir="${INSTALL_DIR}/work/runner-${next_num}"
+            fi
+
+            RUNNER_URLS+=("$url")
+            RUNNER_TOKENS+=("$token")
+            RUNNER_PREFIXES+=("$inst_prefix")
+            RUNNER_LABELS+=("$labels")
+            RUNNER_WORKDIR_LIST+=("$workdir")
+            RUNNER_COUNT="$next_num"
+            inst=$((inst + 1))
+        done
         scan_idx=$((scan_idx + 1))
     done
 
@@ -1563,8 +1615,11 @@ Non-Interactive Environment Variables:
   GHR_RUNNER_1_TOKEN       GitHub registration token for runner 1
   GHR_RUNNER_1_LABELS      Optional comma-separated labels (default: self-hosted,linux,docker)
   GHR_RUNNER_1_NAME_PREFIX Optional runner name prefix (default derived from URL)
+  GHR_RUNNER_1_INSTANCES   Number of concurrent runner instances for runner 1 (default: 1)
   GHR_RUNNER_2_URL         (Optional) Additional runner URL
   GHR_RUNNER_2_TOKEN       (Optional) Additional runner token
+  GHR_RUNNER_INSTANCES     Default number of concurrent instances for each runner target (default: 1)
+  GHR_INSTANCES            Global shorthand for runner instances per target (default: 1)
   GHR_CACHE                Enable cache server: 1 (default) or 0
   GHR_CACHE_MODE           Cache URL mode: internal (default) or host
   GHR_CACHE_URL            Base cache server URL (default: http://cache-server:3000)

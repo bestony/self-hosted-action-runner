@@ -1,5 +1,5 @@
 services:
-  runner:
+  runner-1: &runner-base
     build:
       context: .
       dockerfile: Dockerfile
@@ -8,22 +8,82 @@ services:
     environment:
       - RUNNER_URL=${RUNNER_URL}
       - RUNNER_TOKEN=${RUNNER_TOKEN}
-      - RUNNER_NAME=${RUNNER_NAME:-}
-      - RUNNER_NAME_PREFIX=${RUNNER_NAME_PREFIX:-}
+      - RUNNER_NAME=${RUNNER_NAME_1:-${RUNNER_NAME:-}}
+      - RUNNER_NAME_PREFIX=${RUNNER_NAME_PREFIX_1:-${RUNNER_NAME_PREFIX:-runner-1-}}
       - RUNNER_LABELS=${RUNNER_LABELS:-}
       - RUNNER_GROUP=${RUNNER_GROUP:-}
-      - RUNNER_WORKDIR=${RUNNER_WORKDIR:-${PWD}/work/runner}
+      - RUNNER_WORKDIR=${RUNNER_WORKDIR_1:-${RUNNER_WORKDIR:-${PWD}/work/runner-1}}
       - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
       - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
-      - runner_data:/runner
+      - runner_1_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${RUNNER_WORKDIR:-${PWD}/work/runner}:${RUNNER_WORKDIR:-${PWD}/work/runner}
+      - ${RUNNER_WORKDIR_1:-${RUNNER_WORKDIR:-${PWD}/work/runner-1}}:${RUNNER_WORKDIR_1:-${RUNNER_WORKDIR:-${PWD}/work/runner-1}}
     depends_on:
       cache-server:
         condition: service_started
         required: false
+
+  runner-2:
+    <<: *runner-base
+    environment:
+      - RUNNER_URL=${RUNNER_URL}
+      - RUNNER_TOKEN=${RUNNER_TOKEN}
+      - RUNNER_NAME=${RUNNER_NAME_2:-}
+      - RUNNER_NAME_PREFIX=${RUNNER_NAME_PREFIX_2:-${RUNNER_NAME_PREFIX:-runner-2-}}
+      - RUNNER_LABELS=${RUNNER_LABELS:-}
+      - RUNNER_GROUP=${RUNNER_GROUP:-}
+      - RUNNER_WORKDIR=${RUNNER_WORKDIR_2:-${PWD}/work/runner-2}
+      - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
+      - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - runner_2_data:/runner
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${RUNNER_WORKDIR_2:-${PWD}/work/runner-2}:${RUNNER_WORKDIR_2:-${PWD}/work/runner-2}
+
+  runner-3:
+    <<: *runner-base
+    environment:
+      - RUNNER_URL=${RUNNER_URL}
+      - RUNNER_TOKEN=${RUNNER_TOKEN}
+      - RUNNER_NAME=${RUNNER_NAME_3:-}
+      - RUNNER_NAME_PREFIX=${RUNNER_NAME_PREFIX_3:-${RUNNER_NAME_PREFIX:-runner-3-}}
+      - RUNNER_LABELS=${RUNNER_LABELS:-}
+      - RUNNER_GROUP=${RUNNER_GROUP:-}
+      - RUNNER_WORKDIR=${RUNNER_WORKDIR_3:-${PWD}/work/runner-3}
+      - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
+      - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - runner_3_data:/runner
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${RUNNER_WORKDIR_3:-${PWD}/work/runner-3}:${RUNNER_WORKDIR_3:-${PWD}/work/runner-3}
+    profiles:
+      - scale
+      - all
+
+  runner-4:
+    <<: *runner-base
+    environment:
+      - RUNNER_URL=${RUNNER_URL}
+      - RUNNER_TOKEN=${RUNNER_TOKEN}
+      - RUNNER_NAME=${RUNNER_NAME_4:-}
+      - RUNNER_NAME_PREFIX=${RUNNER_NAME_PREFIX_4:-${RUNNER_NAME_PREFIX:-runner-4-}}
+      - RUNNER_LABELS=${RUNNER_LABELS:-}
+      - RUNNER_GROUP=${RUNNER_GROUP:-}
+      - RUNNER_WORKDIR=${RUNNER_WORKDIR_4:-${PWD}/work/runner-4}
+      - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
+      - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - runner_4_data:/runner
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${RUNNER_WORKDIR_4:-${PWD}/work/runner-4}:${RUNNER_WORKDIR_4:-${PWD}/work/runner-4}
+    profiles:
+      - scale
+      - all
 
   cache-server:
     image: ghcr.io/falcondev-oss/github-actions-cache-server:latest
@@ -41,7 +101,11 @@ services:
     profiles:
       - cache
       - full
+      - all
 
 volumes:
-  runner_data:
+  runner_1_data:
+  runner_2_data:
+  runner_3_data:
+  runner_4_data:
   cache_data:
