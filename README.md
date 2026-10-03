@@ -195,7 +195,28 @@ You can run multiple independent runner stacks on the same host machine (for dif
 
 ---
 
-## 5. More Information
+## 5. Runner Environment and Job Hooks
+
+The runner process runs as the unprivileged `runner` user with `HOME=/home/runner`, so `git config --global` and `actions/checkout` work.
+
+The image includes these tools for jobs:
+- Docker CLI with the Buildx and Compose plugins. Jobs use the host Docker daemon through `/var/run/docker.sock`.
+- GitHub CLI (`gh`). Give it a token in the job, for example `env: GH_TOKEN: ${{ github.token }}`.
+- `git`, `curl`, `jq`, `zstd`.
+
+Jobs that start containers through the host Docker socket often run them as root. Those containers can write root-owned files into the workspace, and the next `actions/checkout` then fails with `EACCES: permission denied`. To prevent this, the image enables a runner job hook (`/opt/runner-hooks/fix-workspace-ownership.sh`). Before and after each job, the hook gives the job workspace and `RUNNER_TEMP` back to the `runner` user.
+
+| Variable | Default | Description |
+|---|---|---|
+| `FIX_WORKSPACE_OWNERSHIP` | `true` | Set to `false` to disable the ownership hook. |
+| `ACTIONS_RUNNER_HOOK_JOB_STARTED` | ownership hook | Set your own script to replace the job-started hook. |
+| `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` | ownership hook | Set your own script to replace the job-completed hook. |
+
+To run matrix jobs in parallel, register more than one runner: run the installer again in the same directory and choose `[A]dd runners`. One runner executes one job at a time.
+
+---
+
+## 6. More Information
 
 For comprehensive documentation, refer to:
 - [development.md](development.md): Architecture details, environment variable reference, DooD workspace setup, multi-platform image builds, Kubernetes / CapRover deployments, and CI/CD automation.
