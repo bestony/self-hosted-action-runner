@@ -4,7 +4,6 @@ services:
         image: $$cap_cache_image
         volumes:
             - $$cap_appname-cache-data:/data
-        restart: unless-stopped
         environment:
             API_BASE_URL: http://srv-captain--$$cap_appname-cache:3000
             STORAGE_DRIVER: filesystem
@@ -25,7 +24,6 @@ services:
             - $$cap_appname-runner-a-data:/runner
             - /var/run/docker.sock:/var/run/docker.sock
             - /tmp/github-runner/$$cap_appname-runner-a:/tmp/github-runner/$$cap_appname-runner-a
-        restart: unless-stopped
         environment:
             RUNNER_URL: $$cap_runner_a_url
             RUNNER_TOKEN: $$cap_runner_a_token
@@ -44,7 +42,6 @@ services:
             - $$cap_appname-runner-b-data:/runner
             - /var/run/docker.sock:/var/run/docker.sock
             - /tmp/github-runner/$$cap_appname-runner-b:/tmp/github-runner/$$cap_appname-runner-b
-        restart: unless-stopped
         environment:
             RUNNER_URL: $$cap_runner_b_url
             RUNNER_TOKEN: $$cap_runner_b_token
@@ -124,4 +121,4 @@ caproverOneClickApp:
     displayName: GitHub Actions Multi-Runner with Cache
     isOfficial: false
     description: Deploy multiple GitHub Actions self-hosted runners with a shared Actions cache server and DooD support on CapRover
-    documentation: Taken from https://github.com/bestony/self-hosted-action-runner
+    documentation: See https://github.com/bestony/self-hosted-action-runner
