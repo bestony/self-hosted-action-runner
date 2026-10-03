@@ -593,11 +593,17 @@ ensure_dependencies() {
             local installed_compose=false
 
             if command -v apt-get >/dev/null 2>&1; then
-                run_with_spinner "Installing docker-compose-plugin via apt" bash -c "$SUDO apt-get update -qq && $SUDO apt-get install -y -qq docker-compose-plugin" && installed_compose=true || true
+                if run_with_spinner "Installing docker-compose-plugin via apt" bash -c "$SUDO apt-get update -qq && $SUDO apt-get install -y -qq docker-compose-plugin"; then
+                    installed_compose=true
+                fi
             elif command -v dnf >/dev/null 2>&1; then
-                run_with_spinner "Installing docker-compose-plugin via dnf" bash -c "$SUDO dnf install -y -q docker-compose-plugin" && installed_compose=true || true
+                if run_with_spinner "Installing docker-compose-plugin via dnf" bash -c "$SUDO dnf install -y -q docker-compose-plugin"; then
+                    installed_compose=true
+                fi
             elif command -v yum >/dev/null 2>&1; then
-                run_with_spinner "Installing docker-compose-plugin via yum" bash -c "$SUDO yum install -y -q docker-compose-plugin" && installed_compose=true || true
+                if run_with_spinner "Installing docker-compose-plugin via yum" bash -c "$SUDO yum install -y -q docker-compose-plugin"; then
+                    installed_compose=true
+                fi
             fi
 
             if [ "$installed_compose" = false ]; then
