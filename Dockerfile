@@ -33,6 +33,14 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
     docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
+# Install GitHub CLI (gh) from the official apt repository
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+    chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=${TARGETARCH:-amd64} signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/* && \
+    gh --version
+
 # Create unprivileged runner user
 RUN useradd -m -s /bin/bash -u 1001 runner && \
     echo "runner ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
@@ -74,7 +82,8 @@ RUN case "${TARGETARCH:-amd64}" in \
     chown -R runner:runner /opt/runner-dist /runner
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY hooks/ /opt/runner-hooks/
+RUN chmod +x /entrypoint.sh /opt/runner-hooks/*.sh
 
 WORKDIR /runner
 

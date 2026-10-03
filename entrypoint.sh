@@ -144,13 +144,23 @@ fi
 
 cd "${RUNNER_DIR}"
 
+RUNNER_USER="runner"
+RUNNER_HOME="$(getent passwd "${RUNNER_USER}" | cut -d: -f6)"
+RUNNER_HOME="${RUNNER_HOME:-/home/${RUNNER_USER}}"
+
+# `sudo -E` keeps the caller environment, including HOME=/root. Reset the
+# identity variables, otherwise git and actions/checkout fail with
+# "EACCES: permission denied, stat '/root/.gitconfig'".
 run_as_runner() {
     if [ "$IS_ROOT" = true ]; then
-        sudo -E -u runner "$@"
+        sudo -E -H -u "${RUNNER_USER}" \
+            env HOME="${RUNNER_HOME}" USER="${RUNNER_USER}" LOGNAME="${RUNNER_USER}" \
+            "$@"
     else
         "$@"
     fi
 }
+log "debug" "Runner process identity: user=${RUNNER_USER} home=${RUNNER_HOME}"
 
 # Step 5: Runner registration if .runner does not exist
 if [ ! -f "${RUNNER_DIR}/.runner" ]; then
@@ -189,7 +199,17 @@ else
     log "info" "Existing runner configuration detected (.runner present). Skipping registration."
 fi
 
-# Step 6: Graceful signal handling and execution
+# Step 6: Job hooks. Restore workspace ownership after Docker steps that ran as root.
+OWNERSHIP_HOOK="/opt/runner-hooks/fix-workspace-ownership.sh"
+if [ "${FIX_WORKSPACE_OWNERSHIP:-true}" = "true" ] && [ -x "$OWNERSHIP_HOOK" ]; then
+    export ACTIONS_RUNNER_HOOK_JOB_STARTED="${ACTIONS_RUNNER_HOOK_JOB_STARTED:-$OWNERSHIP_HOOK}"
+    export ACTIONS_RUNNER_HOOK_JOB_COMPLETED="${ACTIONS_RUNNER_HOOK_JOB_COMPLETED:-$OWNERSHIP_HOOK}"
+    log "info" "Job hooks enabled: started=${ACTIONS_RUNNER_HOOK_JOB_STARTED} completed=${ACTIONS_RUNNER_HOOK_JOB_COMPLETED}"
+else
+    log "info" "Workspace ownership hook disabled (FIX_WORKSPACE_OWNERSHIP=${FIX_WORKSPACE_OWNERSHIP:-true})."
+fi
+
+# Step 7: Graceful signal handling and execution
 _term() {
     log "info" "Caught termination signal! Forwarding SIGTERM to runner process..."
     if [ -n "${RUNNER_PID:-}" ]; then
