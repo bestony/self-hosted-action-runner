@@ -178,8 +178,143 @@ set -e
 
 assert_equals "1" "$TEST3_EC" "install.sh exits with code 1 on invalid URL"
 
+# ------------------------------------------------------------------------------
+# Test 4: Regression check - no container_name, internal mode has no ports:
+# ------------------------------------------------------------------------------
+printf "\nTest 4: Verify absence of container_name and no ports in internal cache mode\n"
+set +e
+grep -q "container_name:" "${TEST1_DIR}/docker-compose.yml"
+HAS_CONTAINER_NAME=$?
+grep -q "ports:" "${TEST1_DIR}/docker-compose.yml"
+HAS_PORTS=$?
+grep -qE "^name: ghr-" "${TEST1_DIR}/docker-compose.yml"
+HAS_NAME=$?
+set -e
+
+assert_failure "$HAS_CONTAINER_NAME" "No container_name anywhere in generated docker-compose.yml"
+assert_failure "$HAS_PORTS" "Internal cache mode does not publish ports in docker-compose.yml"
+assert_success "$HAS_NAME" "Generated docker-compose.yml contains top-level name attribute"
+
+# ------------------------------------------------------------------------------
+# Test 5: Multi-instance project isolation (identical basenames in different dirs)
+# ------------------------------------------------------------------------------
+printf "\nTest 5: Multi-instance isolation with identical basenames\n"
+BASE_TMP="$(mktemp -d /tmp/ghr-multi-XXXXXX)"
+STACK_A="${BASE_TMP}/a/github-runner"
+STACK_B="${BASE_TMP}/b/github-runner"
+
+mkdir -p "$STACK_A" "$STACK_B"
+
+GHR_RUNNER_1_URL="https://github.com/my-org/repo-a" \
+GHR_RUNNER_1_TOKEN="TOKEN_AAA" \
+GHR_CACHE=1 \
+bash "$INSTALL_SH" --non-interactive --no-start --dir "$STACK_A" >/dev/null 2>&1
+
+GHR_RUNNER_1_URL="https://github.com/my-org/repo-b" \
+GHR_RUNNER_1_TOKEN="TOKEN_BBB" \
+GHR_CACHE=1 \
+bash "$INSTALL_SH" --non-interactive --no-start --dir "$STACK_B" >/dev/null 2>&1
+
+PROJ_A="$(grep -E '^COMPOSE_PROJECT_NAME=' "${STACK_A}/.env" | cut -d= -f2)"
+PROJ_B="$(grep -E '^COMPOSE_PROJECT_NAME=' "${STACK_B}/.env" | cut -d= -f2)"
+
+NAME_A="$(grep -E '^name:' "${STACK_A}/docker-compose.yml" | awk '{print $2}')"
+NAME_B="$(grep -E '^name:' "${STACK_B}/docker-compose.yml" | awk '{print $2}')"
+
+if [ -n "$PROJ_A" ] && [ -n "$PROJ_B" ] && [ "$PROJ_A" != "$PROJ_B" ]; then
+    printf "  [PASS] Stacks with same basename have distinct COMPOSE_PROJECT_NAME ('%s' vs '%s')\n" "$PROJ_A" "$PROJ_B"
+    PASSED=$((PASSED + 1))
+else
+    printf "  [FAIL] Stacks have identical or missing project names: '%s' vs '%s'\n" "$PROJ_A" "$PROJ_B" >&2
+    FAILED=$((FAILED + 1))
+fi
+
+if [ -n "$NAME_A" ] && [ -n "$NAME_B" ] && [ "$NAME_A" != "$NAME_B" ]; then
+    printf "  [PASS] Stacks with same basename have distinct top-level name in compose file ('%s' vs '%s')\n" "$NAME_A" "$NAME_B"
+    PASSED=$((PASSED + 1))
+else
+    printf "  [FAIL] Stacks have identical or missing compose names: '%s' vs '%s'\n" "$NAME_A" "$NAME_B" >&2
+    FAILED=$((FAILED + 1))
+fi
+
+# ------------------------------------------------------------------------------
+# Test 6: Host IP mode publishes port
+# ------------------------------------------------------------------------------
+printf "\nTest 6: Host IP cache mode publishes custom port\n"
+STACK_C="${BASE_TMP}/c/github-runner"
+mkdir -p "$STACK_C"
+
+GHR_RUNNER_1_URL="https://github.com/my-org/repo-c" \
+GHR_RUNNER_1_TOKEN="TOKEN_CCC" \
+GHR_CACHE=1 \
+GHR_CACHE_MODE=host \
+GHR_CACHE_PORT=3123 \
+bash "$INSTALL_SH" --non-interactive --no-start --dir "$STACK_C" >/dev/null 2>&1
+
+set +e
+grep -q "3123:3000" "${STACK_C}/docker-compose.yml"
+HAS_HOST_PORT=$?
+grep -q "CACHE_PORT=3123" "${STACK_C}/.env"
+HAS_ENV_PORT=$?
+docker compose -f "${STACK_C}/docker-compose.yml" --env-file "${STACK_C}/.env" config -q
+CONFIG_C_EC=$?
+set -e
+
+assert_success "$HAS_HOST_PORT" "Host IP mode specifies port mapping 3123:3000 in compose file"
+assert_success "$HAS_ENV_PORT" "Host IP mode stores CACHE_PORT=3123 in .env"
+assert_success "$CONFIG_C_EC" "docker compose config -q passes for Host IP mode stack"
+
+# ------------------------------------------------------------------------------
+# Test 7: Concurrency lock prevents simultaneous runs
+# ------------------------------------------------------------------------------
+printf "\nTest 7: Directory lock prevents concurrent execution\n"
+STACK_LOCK="${BASE_TMP}/lock-test"
+mkdir -p "${STACK_LOCK}/.install.lock"
+echo "PID=99999 TIMESTAMP=2026-10-03T00:00:00Z USER=test" > "${STACK_LOCK}/.install.lock/info"
+
+set +e
+GHR_RUNNER_1_URL="https://github.com/my-org/repo-d" \
+GHR_RUNNER_1_TOKEN="TOKEN_DDD" \
+bash "$INSTALL_SH" --non-interactive --no-start --dir "$STACK_LOCK" >/dev/null 2>&1
+LOCKED_EC=$?
+set -e
+
+assert_equals "1" "$LOCKED_EC" "install.sh exits with code 1 when .install.lock exists"
+
+# Remove lock and verify it can now succeed
+rm -rf "${STACK_LOCK}/.install.lock"
+set +e
+GHR_RUNNER_1_URL="https://github.com/my-org/repo-d" \
+GHR_RUNNER_1_TOKEN="TOKEN_DDD" \
+bash "$INSTALL_SH" --non-interactive --no-start --dir "$STACK_LOCK" >/dev/null 2>&1
+UNLOCKED_EC=$?
+set -e
+
+assert_success "$UNLOCKED_EC" "install.sh succeeds once .install.lock is cleared"
+if [ ! -d "${STACK_LOCK}/.install.lock" ]; then
+    printf "  [PASS] .install.lock is automatically cleaned up on exit\n"
+    PASSED=$((PASSED + 1))
+else
+    printf "  [FAIL] .install.lock was left behind after exit\n" >&2
+    FAILED=$((FAILED + 1))
+fi
+
+# ------------------------------------------------------------------------------
+# Test 8: Path validation rejects whitespace and colon
+# ------------------------------------------------------------------------------
+printf "\nTest 8: Reject invalid directory paths (spaces and colons)\n"
+set +e
+bash "$INSTALL_SH" --non-interactive --no-start --dir "/tmp/ghr bad dir with space" >/dev/null 2>&1
+SPACE_EC=$?
+bash "$INSTALL_SH" --non-interactive --no-start --dir "/tmp/ghr:bad:colon" >/dev/null 2>&1
+COLON_EC=$?
+set -e
+
+assert_failure "$SPACE_EC" "install.sh rejects paths with whitespace"
+assert_failure "$COLON_EC" "install.sh rejects paths with colons"
+
 # Clean up
-rm -rf "$TEST1_DIR" "$TEST2_DIR"
+rm -rf "$TEST1_DIR" "$TEST2_DIR" "$BASE_TMP"
 
 printf "\n==================================================\n"
 printf "Test Summary: %d passed, %d failed\n" "$PASSED" "$FAILED"
