@@ -6,7 +6,7 @@ data:
   RUNNER_URL: "https://github.com/my-org/repo-b"
   RUNNER_NAME_PREFIX: "repo-b-"
   RUNNER_LABELS: "self-hosted,linux,docker,k8s"
-  RUNNER_WORKDIR: "/tmp/github-runner/work-repo-b"
+  RUNNER_WORKDIR: "/var/lib/github-runner/github-runners-runner-repo-b"
   ACTIONS_RESULTS_URL: "http://cache-server.github-runners.svc.cluster.local:3000/"
 ---
 apiVersion: v1
@@ -60,7 +60,7 @@ spec:
             - name: docker-sock
               mountPath: /var/run/docker.sock
             - name: runner-work
-              mountPath: /tmp/github-runner/work-repo-b
+              mountPath: /var/lib/github-runner/github-runners-runner-repo-b
           resources:
             requests:
               cpu: 500m
@@ -75,7 +75,7 @@ spec:
             type: Socket
         - name: runner-work
           hostPath:
-            path: /tmp/github-runner/work-repo-b
+            path: /var/lib/github-runner/github-runners-runner-repo-b
             type: DirectoryOrCreate
   volumeClaimTemplates:
     - metadata:
