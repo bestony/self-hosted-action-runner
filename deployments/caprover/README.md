@@ -106,7 +106,16 @@ If using an image built to GHCR / Docker Hub:
 
 ## 6. Multi-Runner Deployment on CapRover
 
-To run multiple runners in CapRover (e.g. for different repositories or organizations):
-1. Simply create separate CapRover apps (`runner-org`, `runner-repo-frontend`, `runner-repo-backend`).
-2. Each app will have its own independent persistent `/runner` directory, environment variables, and registration token.
+To run multiple runners in CapRover:
+
+### Option A: Multi-Runner with Shared Cache (One-Click App Template)
+For multi-repository or multi-organization setups sharing an Actions Cache Server and DooD workspace isolation, use the dedicated one-click template:
+- [Multi-Repository Runner & Cache Server Guide](./multi-repo-cache/README.md)
+- [One-Click App Template](./multi-repo-cache/one-click-app.yml)
+
+### Option B: Independent Single-Runner Apps
+Alternatively, create separate CapRover apps (`runner-org`, `runner-repo-frontend`, `runner-repo-backend`):
+1. Create each app with **Has Persistent Data** enabled.
+2. Each app maintains its own independent persistent `/runner` directory, environment variables, and registration token.
 3. Multiple runner apps can coexist safely on the same CapRover server.
+
