@@ -7,7 +7,7 @@ data:
   RUNNER_NAME_PREFIX: "repo-a-"
   RUNNER_LABELS: "self-hosted,linux,docker,k8s"
   RUNNER_WORKDIR: "/var/lib/github-runner/github-runners-runner-repo-a"
-  ACTIONS_RESULTS_URL: "http://cache-server.github-runners.svc.cluster.local:3000/"
+  ACTIONS_RESULTS_URL: "http://cache-server:3000/"
 ---
 apiVersion: v1
 kind: Secret

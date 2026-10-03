@@ -36,7 +36,7 @@ spec:
               name: http
           env:
             - name: API_BASE_URL
-              value: "http://cache-server.github-runners.svc.cluster.local:3000"
+              value: "http://cache-server:3000"
             - name: STORAGE_DRIVER
               value: "filesystem"
             - name: STORAGE_FILESYSTEM_PATH

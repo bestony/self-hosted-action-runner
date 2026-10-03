@@ -101,7 +101,7 @@ kubectl logs -n github-runners statefulset/runner-repo-b
 
 In this configuration:
 - In-cluster runner steps reach the cache server using Kubernetes DNS:
-  `http://cache-server.github-runners.svc.cluster.local:3000/`
+  `http://cache-server:3000/`
 - If your workflow defines `container:` jobs or Docker service containers, the runner asks the **node Docker daemon** to run the container.
 - These host Docker containers run on the host's bridge network and do **not** use the Kubernetes cluster CoreDNS. They cannot resolve `.cluster.local` names.
 - **Solution for Container Jobs**: Change `cache-server` Service type to `NodePort` or `LoadBalancer`, and point `ACTIONS_RESULTS_URL` and `API_BASE_URL` to the node IP and NodePort (for example, `http://192.168.1.50:32000`).
