@@ -33,6 +33,8 @@ docker_exec() {
 }
 
 # Configuration values
+PROJECT_NAME=""
+CURRENT_LOCK_DIR=""
 RUNNER_COUNT=0
 declare -a RUNNER_URLS=()
 declare -a RUNNER_TOKENS=()
@@ -42,7 +44,7 @@ declare -a RUNNER_WORKDIR_LIST=()
 
 CACHE_ENABLED=true
 CACHE_URL="http://cache-server:3000"
-CACHE_PORT=3000
+CACHE_PORT=""
 RUNNER_IMAGE="${DEFAULT_IMAGE}"
 
 # Colors (only if stdout is a TTY)
@@ -156,7 +158,150 @@ cleanup_spinner() {
     fi
 }
 
-trap 'cleanup_spinner; exit 130' SIGINT SIGTERM
+cleanup_all() {
+    cleanup_spinner
+    if [ -n "${CURRENT_LOCK_DIR:-}" ] && [ -d "$CURRENT_LOCK_DIR" ]; then
+        rm -rf "$CURRENT_LOCK_DIR" 2>/dev/null || true
+        CURRENT_LOCK_DIR=""
+    fi
+}
+
+trap 'cleanup_all; exit 130' SIGINT SIGTERM
+trap 'cleanup_all' EXIT
+
+# ------------------------------------------------------------------------------
+# Isolation & Environment Helpers
+# ------------------------------------------------------------------------------
+compute_project_name() {
+    local dir="$1"
+    local bname
+    bname="$(basename "$dir" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-' | sed 's/^-*//' | sed 's/-*$//')"
+    [ -z "$bname" ] && bname="stack"
+    local hash=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        hash="$(printf "%s" "$dir" | sha256sum | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        hash="$(printf "%s" "$dir" | shasum -a 256 | awk '{print $1}')"
+    else
+        hash="$(printf "%s" "$dir" | cksum | awk '{print $1}')"
+    fi
+    local hash8="${hash:0:8}"
+    echo "ghr-${bname}-${hash8}"
+}
+
+is_port_in_use() {
+    local port="$1"
+    local current_os="${OS:-$(uname -s)}"
+    if [ "$current_os" = "Darwin" ]; then
+        if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+            return 0
+        fi
+    else
+        if command -v ss >/dev/null 2>&1; then
+            if ss -ltnH "sport = :$port" 2>/dev/null | grep -q ":$port"; then
+                return 0
+            fi
+        elif command -v netstat >/dev/null 2>&1; then
+            if netstat -ltn 2>/dev/null | grep -q ":$port "; then
+                return 0
+            fi
+        fi
+    fi
+
+    if command -v nc >/dev/null 2>&1; then
+        if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    if command -v docker >/dev/null 2>&1; then
+        if docker ps --format '{{.Ports}}' 2>/dev/null | grep -qE "(:${port}->|:${port}/)"; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+find_free_port() {
+    local p="${1:-3000}"
+    while [ "$p" -le 65535 ]; do
+        if ! is_port_in_use "$p"; then
+            echo "$p"
+            return 0
+        fi
+        p=$((p + 1))
+    done
+    echo "3000"
+    return 1
+}
+
+sanitize_and_resolve_dir() {
+    local raw="$1"
+    raw="$(echo "$raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+    if [ -z "$raw" ]; then
+        log_error "Installation directory path cannot be empty."
+        return 1
+    fi
+
+    # Expand leading ~ or ~/
+    # shellcheck disable=SC2088
+    if [ "$raw" = "~" ]; then
+        raw="$HOME"
+    elif [ "${raw:0:2}" = "~/" ]; then
+        raw="${HOME}/${raw:2}"
+    fi
+
+    # Reject whitespace
+    if [[ "$raw" =~ [[:space:]] ]]; then
+        log_error "Installation directory path contains whitespace, which breaks Docker bind mounts: '$raw'"
+        return 1
+    fi
+
+    # Reject colon
+    if [[ "$raw" == *:* ]]; then
+        log_error "Installation directory path contains colon ':', which breaks Docker volume mounts: '$raw'"
+        return 1
+    fi
+
+    # If relative path, resolve against $PWD
+    if [[ "$raw" != /* ]]; then
+        raw="${PWD}/${raw}"
+    fi
+
+    # Canonicalize parent directory path
+    local parent
+    parent="$(dirname "$raw")"
+    local base
+    base="$(basename "$raw")"
+    if [ -d "$parent" ]; then
+        parent="$(cd "$parent" && pwd)"
+        raw="${parent}/${base}"
+    fi
+
+    echo "$raw"
+    return 0
+}
+
+acquire_lock() {
+    if [ -z "$INSTALL_DIR" ]; then
+        return 0
+    fi
+    mkdir -p "$INSTALL_DIR"
+    local lock_path="${INSTALL_DIR}/.install.lock"
+    if ! mkdir "$lock_path" 2>/dev/null; then
+        local lock_info="unknown process"
+        if [ -f "${lock_path}/info" ]; then
+            lock_info="$(tr '\n' ' ' < "${lock_path}/info" 2>/dev/null || echo "unknown")"
+        fi
+        log_error "Concurrent run detected: another installer process is currently running in ${INSTALL_DIR}."
+        log_error "Lock directory exists: ${lock_path} (${lock_info})"
+        exit 1
+    fi
+    CURRENT_LOCK_DIR="$lock_path"
+    printf "PID=%d TIMESTAMP=%s USER=%s\n" "$$" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "${USER:-unknown}" > "${lock_path}/info"
+}
 
 init_log_file() {
     if [ -z "$LOG_FILE" ]; then
@@ -580,17 +725,27 @@ collect_interactive_config() {
     fi
 
     if [ -z "$INSTALL_DIR" ]; then
-        INSTALL_DIR="$(prompt_input "Enter installation directory" "$default_dir")"
+        while true; do
+            local raw_dir
+            raw_dir="$(prompt_input "Enter installation directory" "$default_dir")"
+            local resolved
+            if resolved="$(sanitize_and_resolve_dir "$raw_dir")"; then
+                INSTALL_DIR="$resolved"
+                break
+            fi
+        done
+    else
+        INSTALL_DIR="$(sanitize_and_resolve_dir "$INSTALL_DIR")" || exit 1
     fi
-    # Expand ~ or relative paths
-    INSTALL_DIR="$(cd "$(dirname "$INSTALL_DIR")" 2>/dev/null && pwd)/$(basename "$INSTALL_DIR")" || INSTALL_DIR="$default_dir"
     mkdir -p "$INSTALL_DIR"
+    acquire_lock
 
     local env_file="${INSTALL_DIR}/.env"
     local mode="new"
 
     if [ -f "$env_file" ]; then
         load_existing_env "$env_file" || true
+        PROJECT_NAME="$(grep -E '^COMPOSE_PROJECT_NAME=' "$env_file" 2>/dev/null | cut -d= -f2- || true)"
         printf "\n"
         local action
         action="$(prompt_input "Choose action: [A]dd runners / [R]econfigure from scratch / [Q]uit" "A")"
@@ -610,6 +765,10 @@ collect_interactive_config() {
                 mode="add"
                 ;;
         esac
+    fi
+
+    if [ -z "$PROJECT_NAME" ]; then
+        PROJECT_NAME="$(compute_project_name "$INSTALL_DIR")"
     fi
 
     if [ "$mode" = "add" ] && [ -f "$env_file" ]; then
@@ -636,7 +795,7 @@ collect_interactive_config() {
             CACHE_ENABLED=true
         fi
         CACHE_URL="$(grep -E '^CACHE_URL=' "$env_file" 2>/dev/null | cut -d= -f2- || echo 'http://cache-server:3000')"
-        CACHE_PORT="$(grep -E '^CACHE_PORT=' "$env_file" 2>/dev/null | cut -d= -f2 || echo 3000)"
+        CACHE_PORT="$(grep -E '^CACHE_PORT=' "$env_file" 2>/dev/null | cut -d= -f2 || true)"
         RUNNER_IMAGE="$(grep -E '^RUNNER_IMAGE=' "$env_file" 2>/dev/null | cut -d= -f2- || echo "$DEFAULT_IMAGE")"
     else
         RUNNER_COUNT=0
@@ -723,19 +882,23 @@ collect_interactive_config() {
             detected_ip="$(detect_host_ip)"
             local url_mode
             if [ -n "$detected_ip" ]; then
-                url_mode="$(prompt_input "Select cache URL mode: [1] Internal (http://cache-server:3000) or [2] Host IP (http://${detected_ip}:3000)" "1")"
+                url_mode="$(prompt_input "Select cache URL mode: [1] Internal (http://cache-server:3000) or [2] Host IP (reachable by container jobs)" "1")"
             else
                 url_mode="$(prompt_input "Select cache URL mode: [1] Internal (http://cache-server:3000)" "1")"
             fi
 
             if [ "$url_mode" = "2" ] && [ -n "$detected_ip" ]; then
-                CACHE_URL="http://${detected_ip}:3000"
+                local free_port
+                free_port="$(find_free_port 3000)"
+                CACHE_PORT="$(prompt_input "Host port for cache server" "$free_port")"
+                CACHE_URL="http://${detected_ip}:${CACHE_PORT}"
             else
                 CACHE_URL="http://cache-server:3000"
+                CACHE_PORT=""
             fi
-            CACHE_PORT=3000
         else
             CACHE_ENABLED=false
+            CACHE_PORT=""
         fi
 
         # Runner image
@@ -775,11 +938,19 @@ collect_non_interactive_config() {
             INSTALL_DIR="${HOME}/github-runner"
         fi
     fi
+    INSTALL_DIR="$(sanitize_and_resolve_dir "$INSTALL_DIR")" || exit 1
     mkdir -p "$INSTALL_DIR"
-    INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd)"
+    acquire_lock
 
     local env_file="${INSTALL_DIR}/.env"
     local mode="${GHR_MODE:-new}"
+
+    if [ -f "$env_file" ]; then
+        PROJECT_NAME="$(grep -E '^COMPOSE_PROJECT_NAME=' "$env_file" 2>/dev/null | cut -d= -f2- || true)"
+    fi
+    if [ -z "$PROJECT_NAME" ]; then
+        PROJECT_NAME="$(compute_project_name "$INSTALL_DIR")"
+    fi
 
     if [ "$mode" = "add" ] && [ -f "$env_file" ]; then
         log_info "Non-interactive mode 'add' specified. Reading existing configuration..."
@@ -805,7 +976,7 @@ collect_non_interactive_config() {
             CACHE_ENABLED=true
         fi
         CACHE_URL="$(grep -E '^CACHE_URL=' "$env_file" 2>/dev/null | cut -d= -f2- || echo 'http://cache-server:3000')"
-        CACHE_PORT="$(grep -E '^CACHE_PORT=' "$env_file" 2>/dev/null | cut -d= -f2 || echo 3000)"
+        CACHE_PORT="$(grep -E '^CACHE_PORT=' "$env_file" 2>/dev/null | cut -d= -f2 || true)"
         RUNNER_IMAGE="$(grep -E '^RUNNER_IMAGE=' "$env_file" 2>/dev/null | cut -d= -f2- || echo "$DEFAULT_IMAGE")"
     fi
 
@@ -874,15 +1045,38 @@ collect_non_interactive_config() {
     fi
 
     # Cache config
-    local ghr_cache="${GHR_CACHE:-1}"
-    if [ "$ghr_cache" = "0" ] || [ "$ghr_cache" = "false" ]; then
-        CACHE_ENABLED=false
-    else
-        CACHE_ENABLED=true
+    if [ "$mode" != "add" ]; then
+        local ghr_cache="${GHR_CACHE:-1}"
+        if [ "$ghr_cache" = "0" ] || [ "$ghr_cache" = "false" ]; then
+            CACHE_ENABLED=false
+            CACHE_PORT=""
+        else
+            CACHE_ENABLED=true
+            local cache_mode="${GHR_CACHE_MODE:-}"
+            if [ "$cache_mode" = "host" ] || [ "$cache_mode" = "host-ip" ] || [ -n "${GHR_CACHE_PORT:-}" ] || { [ -n "${GHR_CACHE_URL:-}" ] && [[ "${GHR_CACHE_URL}" != *"cache-server"* ]]; }; then
+                # Host IP mode: publish host port
+                if [ -n "${GHR_CACHE_PORT:-}" ]; then
+                    CACHE_PORT="$GHR_CACHE_PORT"
+                else
+                    CACHE_PORT="$(find_free_port 3000)"
+                fi
+
+                if [ -n "${GHR_CACHE_URL:-}" ]; then
+                    CACHE_URL="$GHR_CACHE_URL"
+                else
+                    local host_ip
+                    host_ip="$(detect_host_ip)"
+                    [ -z "$host_ip" ] && host_ip="127.0.0.1"
+                    CACHE_URL="http://${host_ip}:${CACHE_PORT}"
+                fi
+            else
+                # Internal mode: runners reach cache-server:3000 over internal network, no published ports
+                CACHE_URL="${GHR_CACHE_URL:-http://cache-server:3000}"
+                CACHE_PORT=""
+            fi
+        fi
+        RUNNER_IMAGE="${GHR_IMAGE:-${RUNNER_IMAGE:-$DEFAULT_IMAGE}}"
     fi
-    CACHE_URL="${GHR_CACHE_URL:-$CACHE_URL}"
-    CACHE_PORT="${GHR_CACHE_PORT:-$CACHE_PORT}"
-    RUNNER_IMAGE="${GHR_IMAGE:-${RUNNER_IMAGE:-$DEFAULT_IMAGE}}"
 
     log_info "Non-interactive configuration loaded (${RUNNER_COUNT} runners, Cache: ${CACHE_ENABLED})."
 }
@@ -918,6 +1112,7 @@ write_files() {
     {
         echo "# Auto-generated GitHub Actions Runner Stack configuration"
         echo "# Generated at: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        echo "COMPOSE_PROJECT_NAME=${PROJECT_NAME}"
         echo "RUNNER_COUNT=${RUNNER_COUNT}"
         echo "RUNNER_IMAGE=${RUNNER_IMAGE}"
         echo "CACHE_ENABLED=${CACHE_ENABLED}"
@@ -942,6 +1137,8 @@ write_files() {
 
     # 2. Write docker-compose.yml deterministically
     {
+        echo "name: ${PROJECT_NAME}"
+        echo ""
         echo "services:"
 
         if [ "$CACHE_ENABLED" = true ]; then
@@ -949,8 +1146,14 @@ write_files() {
   cache-server:
     image: ${DEFAULT_CACHE_IMAGE}
     restart: unless-stopped
+EOF
+            if [ -n "$CACHE_PORT" ] && [ "$CACHE_PORT" != "0" ]; then
+                cat <<EOF
     ports:
-      - "\${CACHE_PORT:-3000}:3000"
+      - "${CACHE_PORT}:3000"
+EOF
+            fi
+            cat <<EOF
     environment:
       API_BASE_URL: \${CACHE_URL:-http://cache-server:3000}
       STORAGE_DRIVER: filesystem
@@ -1034,6 +1237,7 @@ EOF
 GitHub Actions Self-Hosted Runner Stack
 ================================================================================
 Location: ${INSTALL_DIR}
+Project : ${PROJECT_NAME}
 Runners : ${RUNNER_COUNT}
 Cache   : ${CACHE_ENABLED} (${CACHE_URL})
 
@@ -1066,16 +1270,16 @@ EOF
 # ------------------------------------------------------------------------------
 start_stack() {
     local compose_file="${INSTALL_DIR}/docker-compose.yml"
-    run_with_spinner "Validating Docker Compose configuration" docker_exec compose -f "$compose_file" config -q
+    run_with_spinner "Validating Docker Compose configuration" docker_exec compose -p "$PROJECT_NAME" -f "$compose_file" config -q
 
-    run_with_spinner "Starting container stack" docker_exec compose -f "$compose_file" up -d
+    run_with_spinner "Starting container stack" docker_exec compose -p "$PROJECT_NAME" -f "$compose_file" up -d
 
     log_info "Current container status:"
-    docker_exec compose -f "$compose_file" ps
+    docker_exec compose -p "$PROJECT_NAME" -f "$compose_file" ps
 
-    log_info "Monitoring runner registration logs (up to 30s)..."
+    log_info "Monitoring runner registration logs (up to 90s)..."
     local elapsed=0
-    local max_wait=30
+    local max_wait=90
     local all_done=false
 
     declare -a runner_status=()
@@ -1105,7 +1309,7 @@ start_stack() {
             local idx=$((k - 1))
             if [ "${runner_status[idx]}" = "STARTING" ]; then
                 local logs
-                logs="$(docker_exec compose -f "$compose_file" logs --tail 30 "runner-${k}" 2>&1 || true)"
+                logs="$(docker_exec compose -p "$PROJECT_NAME" -f "$compose_file" logs --tail 30 "runner-${k}" 2>&1 || true)"
                 if echo "$logs" | grep -qi "Listening for Jobs"; then
                     runner_status[idx]="OK: Listening for Jobs"
                     if [ "$is_interactive_tty" = true ]; then
@@ -1175,13 +1379,14 @@ start_stack() {
     while [ "$n" -le "$RUNNER_COUNT" ]; do
         local n_idx=$((n - 1))
         if [ "${runner_status[n_idx]}" = "STARTING" ]; then
-            runner_status[n_idx]="WARN: Timed out waiting for registration after 30s"
+            runner_status[n_idx]="WARN: Timed out waiting for registration after 90s"
         fi
         n=$((n + 1))
     done
 
     printf "\n================ Final Deployment Status ================\n"
     printf "Stack Directory : %s\n" "$INSTALL_DIR"
+    printf "Project Name    : %s\n" "$PROJECT_NAME"
     local m=1
     while [ "$m" -le "$RUNNER_COUNT" ]; do
         local m_idx=$((m - 1))
@@ -1191,8 +1396,10 @@ start_stack() {
             printf "  Runner #%d: ${COLOR_GREEN}✓ %s${COLOR_RESET} (%s)\n" "$m" "$st" "$r_url"
         elif [[ "$st" == FAIL:* ]]; then
             printf "  Runner #%d: ${COLOR_RED}✗ %s${COLOR_RESET} (%s)\n" "$m" "$st" "$r_url"
+            printf "    Inspect logs: docker compose -p %s logs -f runner-%d\n" "$PROJECT_NAME" "$m"
         else
             printf "  Runner #%d: ${COLOR_YELLOW}! %s${COLOR_RESET} (%s)\n" "$m" "$st" "$r_url"
+            printf "    Inspect logs: docker compose -p %s logs -f runner-%d\n" "$PROJECT_NAME" "$m"
         fi
         printf "    Settings page: %s/settings/actions/runners\n" "${r_url%/}"
         m=$((m + 1))
@@ -1215,6 +1422,8 @@ do_uninstall() {
             INSTALL_DIR="${HOME}/github-runner"
         fi
     fi
+    INSTALL_DIR="$(sanitize_and_resolve_dir "$INSTALL_DIR")" || exit 1
+    acquire_lock
 
     local compose_file="${INSTALL_DIR}/docker-compose.yml"
     if [ ! -f "$compose_file" ]; then
@@ -1222,8 +1431,16 @@ do_uninstall() {
         exit 1
     fi
 
-    log_info "Stopping containers in ${INSTALL_DIR}..."
-    docker_exec compose -f "$compose_file" down || true
+    local env_file="${INSTALL_DIR}/.env"
+    if [ -f "$env_file" ]; then
+        PROJECT_NAME="$(grep -E '^COMPOSE_PROJECT_NAME=' "$env_file" 2>/dev/null | cut -d= -f2- || true)"
+    fi
+    if [ -z "$PROJECT_NAME" ]; then
+        PROJECT_NAME="$(compute_project_name "$INSTALL_DIR")"
+    fi
+
+    log_info "Stopping containers for project ${PROJECT_NAME} in ${INSTALL_DIR}..."
+    docker_exec compose -p "$PROJECT_NAME" -f "$compose_file" down || true
 
     local remove_volumes=false
     if [ "$NON_INTERACTIVE" = true ]; then
@@ -1237,8 +1454,31 @@ do_uninstall() {
     fi
 
     if [ "$remove_volumes" = true ]; then
-        log_info "Removing persistent Docker volumes..."
-        docker_exec compose -f "$compose_file" down -v --remove-orphans || true
+        log_info "Removing persistent Docker volumes for project ${PROJECT_NAME}..."
+        docker_exec compose -p "$PROJECT_NAME" -f "$compose_file" down -v --remove-orphans || true
+
+        local work_dir="${INSTALL_DIR}/work"
+        if [ -d "$work_dir" ]; then
+            local remove_work=false
+            if [ "$NON_INTERACTIVE" = true ]; then
+                if [ "${GHR_UNINSTALL_WORKDIR:-no}" = "yes" ]; then
+                    remove_work=true
+                fi
+            else
+                if prompt_confirm "Delete runner workspace directory (${work_dir})?" "N"; then
+                    remove_work=true
+                fi
+            fi
+
+            if [ "$remove_work" = true ]; then
+                log_info "Removing workspace directory ${work_dir}..."
+                if ! rm -rf "$work_dir" 2>/dev/null; then
+                    if [ -n "$SUDO" ] && sudo -n true 2>/dev/null; then
+                        $SUDO rm -rf "$work_dir" 2>/dev/null || true
+                    fi
+                fi
+            fi
+        fi
     fi
 
     log_info "Uninstall complete. Configuration and files remain in ${INSTALL_DIR}."
@@ -1272,11 +1512,14 @@ Non-Interactive Environment Variables:
   GHR_RUNNER_2_URL         (Optional) Additional runner URL
   GHR_RUNNER_2_TOKEN       (Optional) Additional runner token
   GHR_CACHE                Enable cache server: 1 (default) or 0
+  GHR_CACHE_MODE           Cache URL mode: internal (default) or host
   GHR_CACHE_URL            Base cache server URL (default: http://cache-server:3000)
+  GHR_CACHE_PORT           Published host port for cache server in host mode
   GHR_IMAGE                Custom runner container image
   GHR_INSTALL_DOCKER       Allow automatic Docker install: yes (default) or no
   GHR_MODE                 Install mode: new (default), add, or reconfigure
   GHR_UNINSTALL_VOLUMES    With --uninstall: set to 'yes' to delete volumes without prompt
+  GHR_UNINSTALL_WORKDIR    With --uninstall: set to 'yes' to delete workspace directory without prompt
 
 Exit Codes:
   0   Success
@@ -1293,7 +1536,7 @@ parse_args() {
         case "$1" in
             --dir)
                 if [ -n "${2:-}" ]; then
-                    INSTALL_DIR="$2"
+                    INSTALL_DIR="$(sanitize_and_resolve_dir "$2")" || exit 1
                     shift 2
                 else
                     log_error "--dir requires a path argument."
@@ -1376,7 +1619,7 @@ main() {
     if [ "$NO_START" = false ]; then
         step_header "5/6" "Pulling images"
         log_info "Running 'docker compose pull' (showing native Docker progress)..."
-        docker_exec compose -f "${INSTALL_DIR}/docker-compose.yml" pull
+        docker_exec compose -p "$PROJECT_NAME" -f "${INSTALL_DIR}/docker-compose.yml" pull
 
         step_header "6/6" "Starting runners"
         start_stack
