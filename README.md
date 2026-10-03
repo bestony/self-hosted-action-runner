@@ -178,6 +178,9 @@ services:
       - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
       - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - FIX_WORKSPACE_OWNERSHIP=${FIX_WORKSPACE_OWNERSHIP:-true}
+      - RUNNER_EXTRA_APT_PACKAGES=${RUNNER_EXTRA_APT_PACKAGES:-}
+      - RUNNER_WRITABLE_PATHS=${RUNNER_WRITABLE_PATHS:-}
     volumes:
       - runner_1_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
@@ -200,6 +203,9 @@ services:
       - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
       - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - FIX_WORKSPACE_OWNERSHIP=${FIX_WORKSPACE_OWNERSHIP:-true}
+      - RUNNER_EXTRA_APT_PACKAGES=${RUNNER_EXTRA_APT_PACKAGES:-}
+      - RUNNER_WRITABLE_PATHS=${RUNNER_WRITABLE_PATHS:-}
     volumes:
       - runner_2_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
@@ -276,22 +282,49 @@ You can run multiple independent runner stacks on the same host machine (for dif
 
 ---
 
-## 5. Runner Environment and Job Hooks
+## 5. Hosted-Runner Compatibility
 
-The runner process runs as the unprivileged `runner` user with `HOME=/home/runner`, so `git config --global` and `actions/checkout` work.
+Marketplace actions are written for the GitHub-hosted runner images. They rely on conventions that a bare self-hosted container does not have. A missing convention causes errors such as `EACCES: permission denied, mkdir '/opt/hostedtoolcache'` (`ruby/setup-ruby`, `actions/setup-python`) or `EACCES: permission denied, stat '/root/.gitconfig'` (`actions/checkout`).
 
-The image includes these tools for jobs:
-- Docker CLI with the Buildx and Compose plugins. Jobs use the host Docker daemon through `/var/run/docker.sock`.
-- GitHub CLI (`gh`). Give it a token in the job, for example `env: GH_TOKEN: ${{ github.token }}`.
-- `git`, `curl`, `jq`, `zstd`.
+The image supplies these conventions as a contract. The container examines the contract at each start.
 
-Jobs that start containers through the host Docker socket often run them as root. Those containers can write root-owned files into the workspace, and the next `actions/checkout` then fails with `EACCES: permission denied`. To prevent this, the image enables a runner job hook (`/opt/runner-hooks/fix-workspace-ownership.sh`). Before and after each job, the hook gives the job workspace and `RUNNER_TEMP` back to the `runner` user.
+| Convention | What the image supplies |
+|---|---|
+| Runner identity | The runner process runs as the unprivileged `runner` user with `HOME=/home/runner` and passwordless `sudo`. |
+| Tool cache | `RUNNER_TOOL_CACHE` and `AGENT_TOOLSDIRECTORY` are `/opt/hostedtoolcache`. The `runner` user owns the directory. Installed tools are kept in the `/runner` volume (`/runner/_tool-cache`), so a new container does not download them again. |
+| Workspace ownership | A job hook (`/opt/runner-hooks/fix-workspace-ownership.sh`) gives root-owned files in the job workspace, `RUNNER_TEMP` and the tool cache back to the `runner` user before and after each job. |
+| Baseline tools | Docker CLI with the Buildx and Compose plugins (through `/var/run/docker.sock`), GitHub CLI (`gh`), `git`, `git-lfs`, `curl`, `wget`, `jq`, `zip`, `unzip`, `xz`, `zstd`, `rsync`, `openssh-client`, `python3`. |
+| Native builds | `build-essential`, `pkg-config` and the headers `libssl-dev`, `libyaml-dev`, `libffi-dev`, `libreadline-dev`, `libgmp-dev`, `zlib1g-dev`. Ruby gems, Node.js addons and Python wheels with native code can be compiled. |
+| Locale | `LANG=C.UTF-8`. |
+
+`gh` needs a token in the job, for example `env: GH_TOKEN: ${{ github.token }}`. To install a system package in one workflow only, use `sudo apt-get update && sudo apt-get install -y <package>` in a step, as on a hosted runner.
+
+### Extension Points
+
+If a workflow needs something that the image does not supply, change the container configuration. An image rebuild is not necessary.
 
 | Variable | Default | Description |
 |---|---|---|
+| `RUNNER_EXTRA_APT_PACKAGES` | - | apt packages to install when the container starts (separated by spaces or commas), for example `libpq-dev libsqlite3-dev`. |
+| `RUNNER_WRITABLE_PATHS` | - | Colon-separated absolute paths. The container creates each directory and gives it to the `runner` user. System directories such as `/usr` are refused. |
+| `RUNNER_INIT_DIR` | `/opt/runner-init.d` | Each `*.sh` file in this directory runs with `bash` before the runner starts. Mount your scripts into this directory. |
+| `RUNNER_TOOL_CACHE` | `/opt/hostedtoolcache` | Tool cache path. Do not change it unless it is necessary: prebuilt Ruby and Python binaries embed the default path. |
+| `RUNNER_TOOL_CACHE_PERSIST` | `true` | Set to `false` to keep the tool cache in the container filesystem. A volume that you mount at the tool cache path is always used as-is. |
 | `FIX_WORKSPACE_OWNERSHIP` | `true` | Set to `false` to disable the ownership hook. |
 | `ACTIONS_RUNNER_HOOK_JOB_STARTED` | ownership hook | Set your own script to replace the job-started hook. |
 | `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` | ownership hook | Set your own script to replace the job-completed hook. |
+
+A problem in an extension point does not stop the runner. The container log shows a warning.
+
+### Diagnostics
+
+The entrypoint runs `runner-doctor` as the `runner` user before the runner starts. If a convention is not satisfied, the container log shows a `FAIL` line with the cause. To get the full report from a container that is in operation:
+
+```bash
+docker exec -u runner <container> runner-doctor
+```
+
+### Parallel Jobs
 
 To run matrix jobs in parallel, register more than one runner: run the installer again in the same directory and choose `[A]dd runners`. One runner executes one job at a time.
 

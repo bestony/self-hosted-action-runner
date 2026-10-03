@@ -152,6 +152,25 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag_name }}
             type=raw,value=latest,enable=${{ steps.version.outputs.is_latest == 'true' }}
 
+      # Do not publish an image that breaks the hosted-runner compatibility contract.
+      - name: Build image for contract tests (linux/amd64)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          build-args: |
+            RUNNER_VERSION=${{ steps.version.outputs.runner_version }}
+            RUNNER_SHA256_AMD64=${{ steps.version.outputs.sha256_amd64 }}
+            RUNNER_SHA256_ARM64=${{ steps.version.outputs.sha256_arm64 }}
+          load: true
+          tags: self-hosted-runner:contract-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run image contract tests
+        run: |
+          bash tests/image_contract_test.sh self-hosted-runner:contract-test
+
       - name: Build and push multi-architecture image
         uses: docker/build-push-action@v7
         with:

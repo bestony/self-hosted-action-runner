@@ -5,46 +5,13 @@ RUNNER_DIR="/runner"
 DIST_DIR="/opt/runner-dist"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 
-# Logging helper with ISO-8601 UTC timestamp and log level filtering
-log() {
-    local level="$1"
-    shift
-    local msg="$*"
-    local ts
-    ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+RUNNER_USER="runner"
+LIB_DIR="${RUNNER_LIB_DIR:-/opt/runner-lib}"
 
-    level_val() {
-        case "$1" in
-            [Dd][Ee][Bb][Uu][Gg]) echo 1 ;;
-            [Ii][Nn][Ff][Oo])   echo 2 ;;
-            [Ww][Aa][Rr][Nn]*) echo 3 ;;
-            [Ee][Rr][Rr]*)     echo 4 ;;
-            *) echo 2 ;;
-        esac
-    }
-
-    local current_val
-    current_val=$(level_val "$LOG_LEVEL")
-    local msg_val
-    msg_val=$(level_val "$level")
-
-    if [ "$msg_val" -ge "$current_val" ]; then
-        local tag
-        case "$level" in
-            [Dd][Ee][Bb][Uu][Gg]) tag="DEBUG" ;;
-            [Ii][Nn][Ff][Oo])   tag="INFO" ;;
-            [Ww][Aa][Rr][Nn]*) tag="WARN" ;;
-            [Ee][Rr][Rr]*)     tag="ERROR" ;;
-            *) tag="INFO" ;;
-        esac
-
-        if [ "$msg_val" -ge 3 ]; then
-            echo "${ts} [${tag}] ${msg}" >&2
-        else
-            echo "${ts} [${tag}] ${msg}"
-        fi
-    fi
-}
+# shellcheck source=lib/log.sh
+. "${LIB_DIR}/log.sh"
+# shellcheck source=lib/hosted-compat.sh
+. "${LIB_DIR}/hosted-compat.sh"
 
 # Step 1: Volume hydration and automated binary upgrades
 CURRENT_IMG_VERSION=""
@@ -92,8 +59,8 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 if [ "$IS_ROOT" = true ]; then
-    chown -R runner:runner "${RUNNER_DIR}"
-    chown -R runner:runner "${RUNNER_WORKDIR}"
+    chown -R "${RUNNER_USER}:${RUNNER_USER}" "${RUNNER_DIR}"
+    chown -R "${RUNNER_USER}:${RUNNER_USER}" "${RUNNER_WORKDIR}"
 
     # Docker socket GID detection and group assignment
     DOCKER_SOCK="/var/run/docker.sock"
@@ -107,12 +74,16 @@ if [ "$IS_ROOT" = true ]; then
                 groupadd -g "$DOCKER_GID" "$EXISTING_GROUP" 2>/dev/null || true
             fi
             log "info" "Adding runner user to Docker socket group '${EXISTING_GROUP}' (GID ${DOCKER_GID})."
-            usermod -aG "$EXISTING_GROUP" runner 2>/dev/null || true
+            usermod -aG "$EXISTING_GROUP" "${RUNNER_USER}" 2>/dev/null || true
         fi
     fi
 fi
 
-# Step 3: Cache server environment validation & normalization
+# Step 3: GitHub-hosted runner compatibility (tool cache, writable paths,
+# additional packages, init scripts). See lib/hosted-compat.sh.
+compat_prepare_hosted_env
+
+# Step 4: Cache server environment validation & normalization
 if [ -n "${ACTIONS_RESULTS_URL:-}" ]; then
     case "${ACTIONS_RESULTS_URL}" in
         http://*|https://*) ;;
@@ -130,7 +101,7 @@ if [ -n "${ACTIONS_RESULTS_URL:-}" ]; then
     log "info" "Normalized ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL}"
 fi
 
-# Step 4: Runner Name resolution (precedence: RUNNER_NAME > RUNNER_NAME_PREFIX + HOSTNAME > HOSTNAME)
+# Step 5: Runner Name resolution (precedence: RUNNER_NAME > RUNNER_NAME_PREFIX + HOSTNAME > HOSTNAME)
 RUNNER_NAME_VALUE="${RUNNER_NAME:-}"
 if [ -n "$RUNNER_NAME_VALUE" ]; then
     log "info" "Using explicitly configured RUNNER_NAME: ${RUNNER_NAME_VALUE}"
@@ -144,7 +115,6 @@ fi
 
 cd "${RUNNER_DIR}"
 
-RUNNER_USER="runner"
 RUNNER_HOME="$(getent passwd "${RUNNER_USER}" | cut -d: -f6)"
 RUNNER_HOME="${RUNNER_HOME:-/home/${RUNNER_USER}}"
 
@@ -162,7 +132,7 @@ run_as_runner() {
 }
 log "debug" "Runner process identity: user=${RUNNER_USER} home=${RUNNER_HOME}"
 
-# Step 5: Runner registration if .runner does not exist
+# Step 6: Runner registration if .runner does not exist
 if [ ! -f "${RUNNER_DIR}/.runner" ]; then
     log "info" "No existing runner configuration detected (.runner missing). Performing initial registration..."
     if [ -z "${RUNNER_URL:-}" ] || [ -z "${RUNNER_TOKEN:-}" ]; then
@@ -199,7 +169,7 @@ else
     log "info" "Existing runner configuration detected (.runner present). Skipping registration."
 fi
 
-# Step 6: Job hooks. Restore workspace ownership after Docker steps that ran as root.
+# Step 7: Job hooks. Restore workspace and tool cache ownership after steps that ran as root.
 OWNERSHIP_HOOK="/opt/runner-hooks/fix-workspace-ownership.sh"
 if [ "${FIX_WORKSPACE_OWNERSHIP:-true}" = "true" ] && [ -x "$OWNERSHIP_HOOK" ]; then
     export ACTIONS_RUNNER_HOOK_JOB_STARTED="${ACTIONS_RUNNER_HOOK_JOB_STARTED:-$OWNERSHIP_HOOK}"
@@ -209,7 +179,19 @@ else
     log "info" "Workspace ownership hook disabled (FIX_WORKSPACE_OWNERSHIP=${FIX_WORKSPACE_OWNERSHIP:-true})."
 fi
 
-# Step 7: Graceful signal handling and execution
+# Step 8: Examine the compatibility contract as the runner user. A failure
+# does not stop the runner, but the log shows why jobs can fail.
+DOCTOR_ARGS=("--workdir" "${RUNNER_WORKDIR}")
+if [ "$(_log_level_value "${LOG_LEVEL}")" -gt 1 ]; then
+    DOCTOR_ARGS+=("--quiet")
+fi
+if run_as_runner runner-doctor "${DOCTOR_ARGS[@]}"; then
+    log "info" "Hosted-runner compatibility check passed."
+else
+    log "warn" "Hosted-runner compatibility check failed. Jobs can fail with permission or missing-tool errors. Run 'docker exec -u ${RUNNER_USER} <container> runner-doctor' for the full report."
+fi
+
+# Step 9: Graceful signal handling and execution
 _term() {
     log "info" "Caught termination signal! Forwarding SIGTERM to runner process..."
     if [ -n "${RUNNER_PID:-}" ]; then

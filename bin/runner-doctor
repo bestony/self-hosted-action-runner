@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# runner-doctor: examine the GitHub-hosted runner compatibility contract.
+#
+# Marketplace actions rely on conventions of the GitHub-hosted runner images.
+# This tool examines those conventions from the side of the runner user and
+# reports each one that is not satisfied.
+#
+# Usage:
+#   runner-doctor [--quiet] [--workdir <dir>]
+#
+#   docker exec -u runner <container> runner-doctor
+#
+# Options:
+#   --quiet          Print only warnings, failures and the summary.
+#   --workdir <dir>  Runner work directory to examine (default: $RUNNER_WORKDIR).
+#
+# Exit code: 0 when all required checks pass, 1 when one or more checks fail,
+# 2 for a usage error.
+
+set -uo pipefail
+
+HOSTED_TOOL_CACHE="/opt/hostedtoolcache"
+DOCKER_SOCK="/var/run/docker.sock"
+REQUIRED_COMMANDS="git curl tar unzip zip xz zstd jq gcc make sudo"
+OPTIONAL_COMMANDS="docker gh python3 git-lfs"
+
+QUIET=false
+WORKDIR="${RUNNER_WORKDIR:-}"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --quiet)
+            QUIET=true
+            shift
+            ;;
+        --workdir)
+            if [ "$#" -lt 2 ]; then
+                echo "runner-doctor: --workdir needs a directory" >&2
+                exit 2
+            fi
+            WORKDIR="$2"
+            shift 2
+            ;;
+        -h|--help)
+            sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "runner-doctor: unknown option '$1'" >&2
+            exit 2
+            ;;
+    esac
+done
+
+PASSED=0
+WARNED=0
+FAILED=0
+
+pass() {
+    PASSED=$((PASSED + 1))
+    if [ "$QUIET" != true ]; then
+        printf '[runner-doctor] PASS %s\n' "$*"
+    fi
+}
+
+warn() {
+    WARNED=$((WARNED + 1))
+    printf '[runner-doctor] WARN %s\n' "$*" >&2
+}
+
+fail() {
+    FAILED=$((FAILED + 1))
+    printf '[runner-doctor] FAIL %s\n' "$*" >&2
+}
+
+# A probe file is the only reliable writability test: `test -w` ignores
+# read-only mounts and access control lists.
+check_writable_dir() {
+    local label="$1"
+    local dir="$2"
+    local probe
+    if [ -z "$dir" ]; then
+        fail "${label}: path is not set"
+        return 0
+    fi
+    if [ ! -d "$dir" ]; then
+        fail "${label}: ${dir} is not a directory"
+        return 0
+    fi
+    if probe="$(mktemp -p "$dir" .runner-doctor.XXXXXX 2>/dev/null)"; then
+        rm -f "$probe"
+        pass "${label}: ${dir} is writable"
+    else
+        fail "${label}: ${dir} is not writable by user ${CURRENT_USER}"
+    fi
+}
+
+CURRENT_USER="$(id -un 2>/dev/null || id -u)"
+
+# 1. Process identity
+if [ "$(id -u)" -eq 0 ]; then
+    warn "identity: the process runs as root. Run runner-doctor as the runner user."
+else
+    pass "identity: user=${CURRENT_USER} uid=$(id -u)"
+fi
+
+# 2. Home directory. git and actions/checkout write to $HOME/.gitconfig.
+PASSWD_HOME="$(getent passwd "$CURRENT_USER" 2>/dev/null | cut -d: -f6)"
+if [ -n "$PASSWD_HOME" ] && [ "${HOME:-}" != "$PASSWD_HOME" ]; then
+    fail "home: HOME=${HOME:-<unset>} but the home directory of ${CURRENT_USER} is ${PASSWD_HOME}"
+else
+    check_writable_dir "home" "${HOME:-}"
+fi
+
+# 3. Tool cache. setup-* actions install tools into RUNNER_TOOL_CACHE.
+check_writable_dir "tool cache (RUNNER_TOOL_CACHE)" "${RUNNER_TOOL_CACHE:-}"
+if [ "${AGENT_TOOLSDIRECTORY:-}" != "${RUNNER_TOOL_CACHE:-}" ]; then
+    warn "tool cache: AGENT_TOOLSDIRECTORY=${AGENT_TOOLSDIRECTORY:-<unset>} is different from RUNNER_TOOL_CACHE=${RUNNER_TOOL_CACHE:-<unset>}"
+fi
+if [ "${RUNNER_TOOL_CACHE:-}" != "$HOSTED_TOOL_CACHE" ]; then
+    # Prebuilt Ruby and Python binaries embed this path. Actions use it also
+    # when RUNNER_TOOL_CACHE has a different value.
+    check_writable_dir "tool cache (hosted default)" "$HOSTED_TOOL_CACHE"
+fi
+
+# 4. Work and temporary directories
+if [ -n "$WORKDIR" ]; then
+    check_writable_dir "work directory" "$WORKDIR"
+else
+    warn "work directory: not examined (set RUNNER_WORKDIR or use --workdir)"
+fi
+check_writable_dir "temporary directory" "${TMPDIR:-/tmp}"
+
+# 5. Passwordless sudo. Workflows use `sudo apt-get install` as on hosted runners.
+if sudo -n true 2>/dev/null; then
+    pass "sudo: passwordless sudo is available"
+else
+    fail "sudo: passwordless sudo is not available"
+fi
+
+# 6. Docker socket (optional: only necessary for Docker steps)
+if [ -S "$DOCKER_SOCK" ]; then
+    if [ -r "$DOCKER_SOCK" ] && [ -w "$DOCKER_SOCK" ]; then
+        pass "docker: ${DOCKER_SOCK} is accessible"
+    else
+        fail "docker: ${DOCKER_SOCK} is mounted but user ${CURRENT_USER} cannot access it"
+    fi
+else
+    warn "docker: ${DOCKER_SOCK} is not mounted. Docker steps and container jobs are not available."
+fi
+
+# 7. Baseline tools
+for cmd in $REQUIRED_COMMANDS; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+        pass "tool: ${cmd}"
+    else
+        fail "tool: ${cmd} is not installed"
+    fi
+done
+for cmd in $OPTIONAL_COMMANDS; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+        pass "tool: ${cmd}"
+    else
+        warn "tool: ${cmd} is not installed (optional)"
+    fi
+done
+
+# 8. Locale. Hosted runners use UTF-8; many test suites fail with a POSIX locale.
+case "${LC_ALL:-${LANG:-}}" in
+    *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*)
+        pass "locale: ${LC_ALL:-${LANG:-}}"
+        ;;
+    *)
+        warn "locale: LANG=${LANG:-<unset>} is not a UTF-8 locale"
+        ;;
+esac
+
+printf '[runner-doctor] Summary: %d passed, %d warnings, %d failed\n' "$PASSED" "$WARNED" "$FAILED"
+
+if [ "$FAILED" -gt 0 ]; then
+    exit 1
+fi
+exit 0

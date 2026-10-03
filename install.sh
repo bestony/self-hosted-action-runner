@@ -1286,6 +1286,9 @@ EOF
             fi
             cat <<EOF
       - LOG_LEVEL=\${LOG_LEVEL:-info}
+      - FIX_WORKSPACE_OWNERSHIP=\${FIX_WORKSPACE_OWNERSHIP:-true}
+      - RUNNER_EXTRA_APT_PACKAGES=\${RUNNER_EXTRA_APT_PACKAGES:-}
+      - RUNNER_WRITABLE_PATHS=\${RUNNER_WRITABLE_PATHS:-}
     volumes:
       - runner_${j}_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
