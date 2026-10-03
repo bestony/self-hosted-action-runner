@@ -31,7 +31,47 @@ curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/m
 - `--debug`: Enable verbose debug logging.
 - `-h, --help`: Show help text and options.
 
+### Interactive Example (Default)
+
+Run the command without any `GHR_*` variables or flags. The installer reads your answers from the terminal (`/dev/tty`), so this works through `curl | bash`. Press Enter to accept a default value. The token input is hidden.
+
+```text
+$ curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install.sh | bash
+
+==> [3/6] Collecting configuration
+Enter installation directory [default: /home/me/github-runner]:
+
+--- Configuring Runner #1 ---
+GitHub Repository or Organization URL (e.g. https://github.com/org/repo): https://github.com/my-org/repo-a
+GitHub Runner Registration Token:
+Runner name prefix [default: repo-a-]:
+Runner labels (comma-separated) [default: self-hosted,linux,docker]:
+Add another repository/org runner? [y/N]: y
+
+--- Configuring Runner #2 ---
+GitHub Repository or Organization URL (e.g. https://github.com/org/repo): https://github.com/my-org
+GitHub Runner Registration Token:
+Runner name prefix [default: my-org-]:
+Runner labels (comma-separated) [default: self-hosted,linux,docker]:
+Add another repository/org runner? [y/N]:
+
+--- Cache Server Configuration ---
+Enable shared GitHub Actions cache server? [Y/n]:
+Select cache URL mode: [1] Internal (http://cache-server:3000) or [2] Host IP (reachable by container jobs) [default: 1]:
+Runner container image [default: ghcr.io/bestony/self-hosted-action-runner:latest]:
+
+(configuration summary, tokens masked)
+Write configuration and continue? [Y/n]:
+```
+
+Get a registration token from **Settings > Actions > Runners > New self-hosted runner** of the repository or organization. The token expires after 1 hour, but the runner needs it only for the first registration.
+
+If you run the installer again with the same directory, it shows the configured runners and asks you to choose `[A]dd runners`, `[R]econfigure from scratch` or `[Q]uit`.
+
 ### Non-Interactive Example (CI / Automation)
+
+Use `--non-interactive` only when no person is at the terminal. In this mode the installer reads the `GHR_*` variables and does not ask questions. Without `--non-interactive`, the installer asks for all values and ignores the `GHR_*` variables (only `GHR_DEBUG=1` applies in both modes).
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install.sh | \
   GHR_RUNNER_1_URL="https://github.com/my-org/repo-a" \
