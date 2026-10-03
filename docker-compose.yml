@@ -4,7 +4,6 @@ services:
       context: .
       dockerfile: Dockerfile
     image: bestony/self-hosted-runner:latest
-    container_name: github-runner
     restart: unless-stopped
     environment:
       - RUNNER_URL=${RUNNER_URL}
@@ -13,14 +12,14 @@ services:
       - RUNNER_NAME_PREFIX=${RUNNER_NAME_PREFIX:-}
       - RUNNER_LABELS=${RUNNER_LABELS:-}
       - RUNNER_GROUP=${RUNNER_GROUP:-}
-      - RUNNER_WORKDIR=${RUNNER_WORKDIR:-/tmp/github-runner/work}
+      - RUNNER_WORKDIR=${RUNNER_WORKDIR:-${PWD}/work/runner}
       - ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-}
       - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - runner_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${RUNNER_WORKDIR:-/tmp/github-runner/work}:${RUNNER_WORKDIR:-/tmp/github-runner/work}
+      - ${RUNNER_WORKDIR:-${PWD}/work/runner}:${RUNNER_WORKDIR:-${PWD}/work/runner}
     depends_on:
       cache-server:
         condition: service_started
@@ -28,10 +27,9 @@ services:
 
   cache-server:
     image: ghcr.io/falcondev-oss/github-actions-cache-server:9.8.0
-    container_name: github-actions-cache-server
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+#   ports:
+#     - "${CACHE_PORT:-3000}:3000"
     environment:
       API_BASE_URL: ${CACHE_API_BASE_URL:-http://cache-server:3000}
       STORAGE_DRIVER: filesystem
