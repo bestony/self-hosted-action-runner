@@ -8,17 +8,48 @@ ARG RUNNER_SHA256_ARM64=""
 ENV DEBIAN_FRONTEND=noninteractive
 ENV RUNNER_VERSION=${RUNNER_VERSION}
 
-# Install base dependencies and utilities (runtime only, no dev packages)
+# Environment contract of the GitHub-hosted runner images. Marketplace actions
+# rely on these values (see lib/hosted-compat.sh).
+ENV RUNNER_TOOL_CACHE=/opt/hostedtoolcache
+ENV AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache
+ENV LANG=C.UTF-8
+
+# Install the baseline that marketplace actions expect on a hosted runner:
+# - runner dependencies and utilities
+# - archive and transfer tools used by the actions toolkit
+# - a compiler toolchain and common headers for native extensions
+#   (Ruby gems, Node.js addons, Python wheels)
+# - runtime libraries of the prebuilt Ruby and Python binaries
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    bzip2 \
     ca-certificates \
     curl \
+    file \
     git \
+    git-lfs \
     gnupg \
     jq \
+    libffi-dev \
+    libgmp-dev \
     libicu70 \
+    libreadline-dev \
+    libssl-dev \
+    libyaml-dev \
     lsb-release \
+    openssh-client \
+    patch \
+    pkg-config \
+    python3 \
+    rsync \
     sudo \
     tar \
+    tzdata \
+    unzip \
+    wget \
+    xz-utils \
+    zip \
+    zlib1g-dev \
     zstd \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,9 +72,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o 
     && rm -rf /var/lib/apt/lists/* && \
     gh --version
 
-# Create unprivileged runner user
+# Create unprivileged runner user and the runner-owned tool cache
 RUN useradd -m -s /bin/bash -u 1001 runner && \
-    echo "runner ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+    echo "runner ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+    install -d -o runner -g runner "${RUNNER_TOOL_CACHE}"
 
 # Download runner package for matching architecture, verify SHA256, install dependencies, and apply/verify GHA Cache Server patch
 RUN case "${TARGETARCH:-amd64}" in \
@@ -82,8 +114,10 @@ RUN case "${TARGETARCH:-amd64}" in \
     chown -R runner:runner /opt/runner-dist /runner
 
 COPY entrypoint.sh /entrypoint.sh
+COPY lib/ /opt/runner-lib/
 COPY hooks/ /opt/runner-hooks/
-RUN chmod +x /entrypoint.sh /opt/runner-hooks/*.sh
+COPY bin/runner-doctor /usr/local/bin/runner-doctor
+RUN chmod +x /entrypoint.sh /opt/runner-hooks/*.sh /usr/local/bin/runner-doctor
 
 WORKDIR /runner
 

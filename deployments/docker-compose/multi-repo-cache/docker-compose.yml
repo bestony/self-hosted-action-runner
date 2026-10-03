@@ -46,6 +46,9 @@ services:
       - ACTIONS_RESULTS_URL=${CACHE_URL:-http://cache-server:3000}/
       - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - FIX_WORKSPACE_OWNERSHIP=${FIX_WORKSPACE_OWNERSHIP:-true}
+      - RUNNER_EXTRA_APT_PACKAGES=${RUNNER_EXTRA_APT_PACKAGES:-}
+      - RUNNER_WRITABLE_PATHS=${RUNNER_WRITABLE_PATHS:-}
     volumes:
       - runner_a_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
@@ -64,6 +67,9 @@ services:
       - ACTIONS_RESULTS_URL=${CACHE_URL:-http://cache-server:3000}/
       - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - FIX_WORKSPACE_OWNERSHIP=${FIX_WORKSPACE_OWNERSHIP:-true}
+      - RUNNER_EXTRA_APT_PACKAGES=${RUNNER_EXTRA_APT_PACKAGES:-}
+      - RUNNER_WRITABLE_PATHS=${RUNNER_WRITABLE_PATHS:-}
     volumes:
       - runner_b_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock

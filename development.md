@@ -12,8 +12,9 @@ This guide provides technical specifications, architectural details, deployment 
 The runner container provides a secure, automated environment for GitHub Actions workflows.
 
 Key architectural components:
-- **Base System**: Ubuntu 24.04 LTS minimal runtime with Git, cURL, `zstd`, `jq`, and Docker CLI tools.
-- **Unprivileged User**: Workflows run under the non-root `runner` user (`uid=1000`).
+- **Base System**: Ubuntu 22.04 LTS with Git, cURL, `zstd`, `jq`, Docker CLI tools, and a compiler toolchain for native extensions.
+- **Unprivileged User**: Workflows run under the non-root `runner` user (`uid=1001`).
+- **Hosted-Runner Compatibility**: `lib/hosted-compat.sh` supplies the conventions of the GitHub-hosted runner images (tool cache, writable paths, additional packages, init scripts). `runner-doctor` examines them at each start. See section 8.
 - **Dynamic Group Adaptation**: `entrypoint.sh` inspects the GID of `/var/run/docker.sock` at startup and creates or adjusts a container group so the `runner` user accesses Docker without `sudo`.
 - **Signal Handling**: Traps `SIGTERM` and `SIGINT` signals to gracefully stop active jobs before container termination.
 - **Cache Server Support**: A binary patch on `Runner.Worker.dll` redirects cache endpoints from internal services to custom endpoints specified by `ACTIONS_RESULTS_URL`.
@@ -36,6 +37,12 @@ Configure the runner through environment variables. You can store these variable
 | `ACTIONS_RESULTS_URL` | No | - | External cache server URL (e.g. `http://cache-server:3000/`). Trailing slash is added automatically. |
 | `DISABLE_AUTO_UPDATE` | No | `false` | Disables runner self-updates. Automatically enabled when `ACTIONS_RESULTS_URL` is set. |
 | `LOG_LEVEL` | No | `info` | Output verbosity: `debug`, `info`, `warn`, or `error`. |
+| `FIX_WORKSPACE_OWNERSHIP` | No | `true` | Job hook that gives root-owned files in the workspace, `RUNNER_TEMP` and the tool cache back to the `runner` user. |
+| `RUNNER_TOOL_CACHE` | No | `/opt/hostedtoolcache` | Tool cache path for `setup-*` actions. `AGENT_TOOLSDIRECTORY` always gets the same value. |
+| `RUNNER_TOOL_CACHE_PERSIST` | No | `true` | Keeps the tool cache in the `/runner` volume (`/runner/_tool-cache`). |
+| `RUNNER_EXTRA_APT_PACKAGES` | No | - | apt packages to install when the container starts (separated by spaces or commas). |
+| `RUNNER_WRITABLE_PATHS` | No | - | Colon-separated absolute paths that the `runner` user must own. |
+| `RUNNER_INIT_DIR` | No | `/opt/runner-init.d` | Directory with `*.sh` init scripts that run before the runner starts. |
 
 ---
 
@@ -154,3 +161,43 @@ This repository maintains two automated GitHub Actions workflows:
 3. **Docker Hub Overview Sync** ([.github/workflows/dockerhub-description.yml](file:///Users/bestony/code/docker/self-hosted-runner/.github/workflows/dockerhub-description.yml)):
    - Triggers on push to `main` when `README.md` changes.
    - Pushes updated documentation directly to Docker Hub description.
+
+---
+
+## 8. Hosted-Runner Compatibility Contract
+
+Marketplace actions rely on conventions of the GitHub-hosted runner images. The image keeps these conventions in one location, so that a new compatibility problem has one place for its correction and one test suite that prevents a regression.
+
+| Component | Path | Function |
+|---|---|---|
+| Contract implementation | `lib/hosted-compat.sh` | Prepares the tool cache, the writable paths, the additional apt packages and the init scripts when the container starts. All functions are fail-soft: they log a problem and the runner continues. |
+| Contract check | `bin/runner-doctor` | Examines the contract as the `runner` user: home directory, tool cache, work directory, `sudo`, Docker socket, baseline tools and locale. The entrypoint runs it before the runner starts. |
+| Job hook | `hooks/fix-workspace-ownership.sh` | Gives root-owned files back to the `runner` user before and after each job. |
+| Contract tests | `tests/image_contract_test.sh` | Starts the real entrypoint with a stub runner and makes sure that the contract is satisfied. CI runs the tests for each change, and the publish workflow runs them before it pushes an image. |
+
+### Tool Cache Storage
+
+The entrypoint selects the storage of `RUNNER_TOOL_CACHE` in this sequence:
+
+1. A volume that you mount at the tool cache path is used as-is.
+2. A path below `/runner` is used as-is.
+3. An empty tool cache becomes a symbolic link to `/runner/_tool-cache`. Installed tools stay available when the container is recreated, and no change to the deployment is necessary.
+4. A tool cache with content (tools that a derived image supplies) stays in the container filesystem.
+
+Each runner instance has its own `/runner` volume, thus instances do not write to the same tool cache at the same time.
+
+### How to Add a Convention
+
+1. Add the preparation step to `lib/hosted-compat.sh`.
+2. Add a check to `bin/runner-doctor`.
+3. Add a test case to `tests/image_contract_test.sh`.
+
+Run the tests locally:
+
+```bash
+# Build the image and run all cases
+bash tests/image_contract_test.sh
+
+# Test an image that is already built
+bash tests/image_contract_test.sh bestony/self-hosted-runner:latest
+```

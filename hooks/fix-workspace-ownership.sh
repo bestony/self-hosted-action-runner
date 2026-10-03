@@ -4,8 +4,9 @@
 # Jobs that use the host Docker socket often start containers as root that
 # write into the bind-mounted workspace. The runner process runs as the
 # unprivileged "runner" user and then cannot clean or check out the workspace
-# ("EACCES: permission denied"). This hook gives those files back to the
-# runner user before and after each job.
+# ("EACCES: permission denied"). Steps that use sudo can do the same to the
+# tool cache. This hook gives those files back to the runner user before and
+# after each job.
 #
 # The hook never fails the job: every problem is logged as a warning.
 
@@ -23,6 +24,9 @@ fix_dir() {
     if [ -z "$dir" ] || [ ! -d "$dir" ]; then
         return 0
     fi
+    # Resolve symbolic links: find and chown do not follow a link operand
+    # (the tool cache can be a link into the runner volume).
+    dir="$(realpath -e -- "$dir" 2>/dev/null)" || return 0
     # Fast path: skip the recursive chown when every entry is already ours.
     if [ -z "$(find "$dir" ! -user "$RUNNER_USER" -print -quit 2>/dev/null)" ]; then
         return 0
@@ -38,5 +42,6 @@ fix_dir() {
 # RUNNER_WORKSPACE is the per-repository directory that contains GITHUB_WORKSPACE.
 fix_dir "${RUNNER_WORKSPACE:-${GITHUB_WORKSPACE:-}}"
 fix_dir "${RUNNER_TEMP:-}"
+fix_dir "${RUNNER_TOOL_CACHE:-}"
 
 exit 0

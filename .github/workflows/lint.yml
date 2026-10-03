@@ -20,7 +20,7 @@ jobs:
 
       - name: Run ShellCheck
         run: |
-          shellcheck entrypoint.sh install.sh hooks/*.sh tests/*.sh
+          shellcheck -x entrypoint.sh install.sh hooks/*.sh lib/*.sh bin/runner-doctor tests/*.sh
 
       - name: Run actionlint
         run: |
@@ -43,3 +43,13 @@ jobs:
       - name: Validate Kubernetes manifests with kustomize
         run: |
           kubectl kustomize deployments/kubernetes/multi-repo-cache
+
+  image-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build image and run contract tests
+        run: |
+          bash tests/image_contract_test.sh
