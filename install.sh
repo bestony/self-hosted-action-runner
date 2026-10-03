@@ -891,9 +891,10 @@ collect_interactive_config() {
         r_labels="$(prompt_input "Runner labels (comma-separated)" "self-hosted,linux,docker")"
 
         # Concurrency / Instances
+        local default_inst="${GHR_RUNNER_INSTANCES:-${GHR_INSTANCES:-1}}"
         local r_instances
         while true; do
-            r_instances="$(prompt_input "Number of runner instances for this target (to run jobs concurrently)" "1")"
+            r_instances="$(prompt_input "Number of runner instances for this target (to run jobs concurrently)" "$default_inst")"
             if [[ "$r_instances" =~ ^[1-9][0-9]*$ ]]; then
                 break
             else
@@ -1603,6 +1604,7 @@ Usage:
 
 Options:
   --dir <path>             Installation directory (default: /opt/github-runner for root, \$HOME/github-runner for non-root)
+  --instances <count>      Number of runner instances per target (default: 1)
   --non-interactive        Run without interactive prompts (reads GHR_* environment variables)
   --no-start               Generate files and docker-compose.yml only (skip docker compose pull & up)
   --skip-docker-install    Skip automatic Docker Engine & Compose plugin installation attempts
@@ -1650,6 +1652,15 @@ parse_args() {
                     shift 2
                 else
                     log_error "--dir requires a path argument."
+                    exit 2
+                fi
+                ;;
+            --instances|--concurrency)
+                if [ -n "${2:-}" ] && [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
+                    GHR_INSTANCES="$2"
+                    shift 2
+                else
+                    log_error "--instances requires a positive integer argument."
                     exit 2
                 fi
                 ;;

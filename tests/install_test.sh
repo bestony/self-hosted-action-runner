@@ -466,6 +466,26 @@ assert_success "$MULTI_COMPOSE_EC" "docker compose config -q passes on 3-instanc
 
 rm -rf "$TEST11_DIR"
 
+# ------------------------------------------------------------------------------
+# Test 12: CLI --instances argument
+# ------------------------------------------------------------------------------
+printf "\nTest 12: CLI --instances argument (--instances 2)\n"
+TEST12_DIR="$(mktemp -d /tmp/ghr-test-12-XXXXXX)"
+
+set +e
+GHR_RUNNER_1_URL="https://github.com/my-org/cli-repo" \
+GHR_RUNNER_1_TOKEN="TOKEN_CLI_456" \
+bash "$INSTALL_SH" --non-interactive --no-start --instances 2 --dir "$TEST12_DIR" >/dev/null 2>&1
+TEST12_EC=$?
+set -e
+
+assert_success "$TEST12_EC" "install.sh runs successfully with --instances 2"
+
+COUNT_CLI="$(grep -E '^RUNNER_COUNT=' "${TEST12_DIR}/.env" | cut -d= -f2)"
+assert_equals "2" "$COUNT_CLI" "RUNNER_COUNT is 2 with --instances 2"
+
+rm -rf "$TEST12_DIR"
+
 # Clean up
 rm -rf "$TEST1_DIR" "$TEST2_DIR" "$BASE_TMP"
 

@@ -204,6 +204,10 @@ services:
       - runner_2_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
       - ${RUNNER_WORKDIR_2:-${PWD}/work/runner-2}:${RUNNER_WORKDIR_2:-${PWD}/work/runner-2}
+    profiles:
+      - multi
+      - scale
+      - all
 
   cache-server:
     image: ghcr.io/falcondev-oss/github-actions-cache-server:latest
@@ -240,21 +244,21 @@ volumes:
 2. Configure `RUNNER_URL` and `RUNNER_TOKEN` in `.env`.
 3. Start the services:
    ```bash
-   # Start 2 concurrent runner instances (default)
+   # Start single runner instance (default)
    docker compose up -d
 
-   # Start single runner instance only
-   docker compose up -d runner-1
+   # Start 2 concurrent runner instances
+   docker compose --profile multi up -d
 
    # Scale to 4 concurrent runner instances
    docker compose --profile scale up -d
 
-   # Start runners with cache server
+   # Start runner with cache server
    docker compose --profile cache up -d
    ```
 4. View runner logs:
    ```bash
-   docker compose logs -f runner-1 runner-2
+   docker compose logs -f
    ```
 
 ---
