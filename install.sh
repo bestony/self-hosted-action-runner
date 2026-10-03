@@ -36,6 +36,7 @@ docker_exec() {
 PROJECT_NAME=""
 CURRENT_LOCK_DIR=""
 RUNNER_COUNT=0
+FAILED_RUNNERS_COUNT=0
 declare -a RUNNER_URLS=()
 declare -a RUNNER_TOKENS=()
 declare -a RUNNER_LABELS=()
@@ -685,6 +686,31 @@ derive_prefix_from_url() {
     local name
     name="$(basename "$url" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-' | sed 's/-*$//')"
     echo "${name}-"
+}
+
+derive_settings_url() {
+    local url="${1%/}"
+    while [[ "$url" == */ ]]; do
+        url="${url%/}"
+    done
+    local proto="https"
+    local rest="$url"
+    if [[ "$url" == http://* ]]; then
+        proto="http"
+        rest="${url#http://}"
+    elif [[ "$url" == https://* ]]; then
+        proto="https"
+        rest="${url#https://}"
+    fi
+
+    local host="${rest%%/*}"
+    local path="${rest#*/}"
+
+    if [[ "$path" == *"/"* ]]; then
+        echo "${proto}://${host}/${path}/settings/actions/runners"
+    else
+        echo "${proto}://${host}/organizations/${path}/settings/actions/runners"
+    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -1384,6 +1410,20 @@ start_stack() {
         n=$((n + 1))
     done
 
+    # Stop failed runners to avoid restart-loops hammering GitHub API
+    local failed_count=0
+    local k=1
+    while [ "$k" -le "$RUNNER_COUNT" ]; do
+        local k_idx=$((k - 1))
+        local st="${runner_status[k_idx]}"
+        if [[ "$st" == FAIL:* ]]; then
+            docker_exec compose -p "$PROJECT_NAME" -f "$compose_file" stop "runner-${k}" >/dev/null 2>&1 || true
+            failed_count=$((failed_count + 1))
+        fi
+        k=$((k + 1))
+    done
+    FAILED_RUNNERS_COUNT="$failed_count"
+
     printf "\n================ Final Deployment Status ================\n"
     printf "Stack Directory : %s\n" "$INSTALL_DIR"
     printf "Project Name    : %s\n" "$PROJECT_NAME"
@@ -1392,16 +1432,19 @@ start_stack() {
         local m_idx=$((m - 1))
         local st="${runner_status[m_idx]}"
         local r_url="${RUNNER_URLS[m_idx]}"
+        local settings_url
+        settings_url="$(derive_settings_url "$r_url")"
         if [[ "$st" == OK:* ]]; then
             printf "  Runner #%d: ${COLOR_GREEN}✓ %s${COLOR_RESET} (%s)\n" "$m" "$st" "$r_url"
         elif [[ "$st" == FAIL:* ]]; then
             printf "  Runner #%d: ${COLOR_RED}✗ %s${COLOR_RESET} (%s)\n" "$m" "$st" "$r_url"
             printf "    Inspect logs: docker compose -p %s logs -f runner-%d\n" "$PROJECT_NAME" "$m"
+            printf "    How to fix: edit RUNNER_%d_TOKEN in %s/.env with a fresh token then 'cd %s && docker compose up -d runner-%d'\n" "$m" "$INSTALL_DIR" "$INSTALL_DIR" "$m"
         else
             printf "  Runner #%d: ${COLOR_YELLOW}! %s${COLOR_RESET} (%s)\n" "$m" "$st" "$r_url"
             printf "    Inspect logs: docker compose -p %s logs -f runner-%d\n" "$PROJECT_NAME" "$m"
         fi
-        printf "    Settings page: %s/settings/actions/runners\n" "${r_url%/}"
+        printf "    Settings page: %s\n" "$settings_url"
         m=$((m + 1))
     done
     printf "=========================================================\n"
@@ -1627,6 +1670,11 @@ main() {
         step_header "5/6" "Pulling images (skipped: --no-start)"
         step_header "6/6" "Starting runners (skipped: --no-start)"
         log_info "Files are ready in ${INSTALL_DIR}."
+    fi
+
+    if [ "${FAILED_RUNNERS_COUNT:-0}" -gt 0 ]; then
+        log_warn "Installer completed with ${FAILED_RUNNERS_COUNT} failed runner(s)"
+        exit 1
     fi
 
     log_info "Installer completed successfully."

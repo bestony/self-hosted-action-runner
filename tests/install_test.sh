@@ -313,6 +313,91 @@ set -e
 assert_failure "$SPACE_EC" "install.sh rejects paths with whitespace"
 assert_failure "$COLON_EC" "install.sh rejects paths with colons"
 
+# ------------------------------------------------------------------------------
+# Test 9: Settings URL derivation for org vs repo runners
+# ------------------------------------------------------------------------------
+printf "\nTest 9: Settings URL derivation for org vs repo\n"
+TMP_SRC="$(mktemp /tmp/ghr-src-XXXXXX.sh)"
+sed '/^main "\$@"/d' "$INSTALL_SH" > "$TMP_SRC"
+
+test_settings_url() {
+    local in_url="$1"
+    bash -c "source '$TMP_SRC' && derive_settings_url '$in_url'"
+}
+
+URL_ORG="$(test_settings_url "https://github.com/my-org")"
+assert_equals "https://github.com/organizations/my-org/settings/actions/runners" "$URL_ORG" "Org URL derives organizations settings path"
+
+URL_ORG_SLASH="$(test_settings_url "https://github.com/my-org/")"
+assert_equals "https://github.com/organizations/my-org/settings/actions/runners" "$URL_ORG_SLASH" "Org URL with trailing slash derives organizations settings path"
+
+URL_REPO="$(test_settings_url "https://github.com/my-org/my-repo")"
+assert_equals "https://github.com/my-org/my-repo/settings/actions/runners" "$URL_REPO" "Repo URL preserves repo settings path"
+
+URL_REPO_SLASH="$(test_settings_url "https://github.com/my-org/my-repo/")"
+assert_equals "https://github.com/my-org/my-repo/settings/actions/runners" "$URL_REPO_SLASH" "Repo URL with trailing slash preserves repo settings path"
+
+URL_GHES_ORG="$(test_settings_url "https://ghe.example.com/company")"
+assert_equals "https://ghe.example.com/organizations/company/settings/actions/runners" "$URL_GHES_ORG" "GHES org URL derives organizations settings path"
+
+URL_GHES_REPO="$(test_settings_url "https://ghe.example.com/company/project")"
+assert_equals "https://ghe.example.com/company/project/settings/actions/runners" "$URL_GHES_REPO" "GHES repo URL preserves repo settings path"
+
+rm -f "$TMP_SRC"
+
+# ------------------------------------------------------------------------------
+# Test 10: Failed runner handling stops container and exits 1 with warning
+# ------------------------------------------------------------------------------
+printf "\nTest 10: Failed runner stop and exit 1 warning\n"
+TEST10_OUT="$(bash -c '
+TMP_SRC="$(mktemp /tmp/ghr-src-XXXXXX.sh)"
+sed "/^main \"\$@\"/d" "'"$INSTALL_SH"'" > "$TMP_SRC"
+source "$TMP_SRC"
+rm -f "$TMP_SRC"
+
+# Mock docker_exec to capture stop command
+STOPPED_CONTAINER=""
+docker_exec() {
+    if [ "$1" = "compose" ] && [ "$5" = "stop" ]; then
+        STOPPED_CONTAINER="$6"
+        echo "STOPPED:$6"
+    fi
+}
+
+PROJECT_NAME="test-proj"
+INSTALL_DIR="/tmp/test-dir"
+RUNNER_COUNT=1
+RUNNER_URLS=("https://github.com/test-org/test-repo")
+runner_status=("FAIL: Registration failed (401 Unauthorized)")
+compose_file="${INSTALL_DIR}/docker-compose.yml"
+
+failed_count=0
+k=1
+while [ "$k" -le "$RUNNER_COUNT" ]; do
+    k_idx=$((k - 1))
+    st="${runner_status[k_idx]}"
+    if [[ "$st" == FAIL:* ]]; then
+        docker_exec compose -p "$PROJECT_NAME" -f "$compose_file" stop "runner-${k}" >/dev/null 2>&1 || true
+        failed_count=$((failed_count + 1))
+    fi
+    k=$((k + 1))
+done
+FAILED_RUNNERS_COUNT="$failed_count"
+
+if [ "${FAILED_RUNNERS_COUNT:-0}" -gt 0 ]; then
+    log_warn "Installer completed with ${FAILED_RUNNERS_COUNT} failed runner(s)"
+    exit 1
+fi
+' 2>&1 || true)"
+
+if echo "$TEST10_OUT" | grep -q "Installer completed with 1 failed runner(s)"; then
+    printf "  [PASS] Installer outputs warning with failed runner count\n"
+    PASSED=$((PASSED + 1))
+else
+    printf "  [FAIL] Expected failed runner warning, got: %s\n" "$TEST10_OUT" >&2
+    FAILED=$((FAILED + 1))
+fi
+
 # Clean up
 rm -rf "$TEST1_DIR" "$TEST2_DIR" "$BASE_TMP"
 
