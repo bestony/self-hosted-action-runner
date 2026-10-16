@@ -12,7 +12,7 @@ This guide provides technical specifications, architectural details, deployment 
 The runner container provides a secure, automated environment for GitHub Actions workflows.
 
 Key architectural components:
-- **Base System**: Ubuntu 22.04 LTS with Git, cURL, `zstd`, `jq`, Docker CLI tools, and a compiler toolchain for native extensions.
+- **Base System**: Ubuntu 26.04 LTS with Git, cURL, `zstd`, `jq`, Docker CLI tools, and a compiler toolchain for native extensions.
 - **Unprivileged User**: Workflows run under the non-root `runner` user (`uid=1001`).
 - **Hosted-Runner Compatibility**: `lib/hosted-compat.sh` supplies the conventions of the GitHub-hosted runner images (tool cache, writable paths, additional packages, init scripts). `runner-doctor` examines them at each start. See section 8.
 - **Dynamic Group Adaptation**: `entrypoint.sh` inspects the GID of `/var/run/docker.sock` at startup and creates or adjusts a container group so the `runner` user accesses Docker without `sudo`.

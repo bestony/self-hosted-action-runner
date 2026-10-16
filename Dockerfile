@@ -1,4 +1,7 @@
-FROM ubuntu:22.04
+# Ubuntu 26.04 LTS tracks the base of the GitHub-hosted ubuntu-latest image,
+# which moves from 24.04 to 26.04 in November 2026:
+# https://github.com/actions/runner-images/issues/14748
+FROM ubuntu:26.04
 
 ARG TARGETARCH
 ARG RUNNER_VERSION=2.337.0
@@ -32,7 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     libffi-dev \
     libgmp-dev \
-    libicu70 \
+    libicu78 \
     libreadline-dev \
     libssl-dev \
     libyaml-dev \
@@ -57,7 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN install -m 0755 -d /etc/apt/keyrings && \
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && \
     chmod a+r /etc/apt/keyrings/docker.asc && \
-    echo "deb [arch=${TARGETARCH:-amd64} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable" > /etc/apt/sources.list.d/docker.list && \
+    echo "deb [arch=${TARGETARCH:-amd64} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu resolute stable" > /etc/apt/sources.list.d/docker.list && \
     apt-get update && apt-get install -y --no-install-recommends \
     docker-ce-cli \
     docker-buildx-plugin \
