@@ -80,6 +80,8 @@ mount 一个 unix socket 无法通过 `:z`/`:Z` 重标记，在 SELinux enforcin
 
 `GHR_*` 环境变量在显式设置时覆盖 `.env` 中的同名记录（如 `GHR_QUADLET_DIR`、`GHR_IMAGE`、`GHR_CACHE_*`、`GHR_SELINUX`、`GHR_AUTO_UPDATE`），未设置时才使用 `.env` 的值，最后回落到内置默认值。这样"重复执行安装器应用 `.env`"与"用一次性环境变量做临时覆盖（例如灰度升级镜像）"两种用法都成立，且 `.env` 始终记录生效后的结果。
 
+重配（交互式 `R`、非交互式 `GHR_MODE=reconfigure`）同样遵循该优先级，且不得因"没有显式传入"而重置记录值：`.env` 按实例逐行记录（`RUNNER_<n>_URL`、`RUNNER_<n>_NAME_PREFIX`、…），重配前把 URL 序列另存为 `RECORDED_URLS`，交互式流程用它给出 URL 与实例数（同 URL 条目数）的提示默认值，非交互式流程在实例数变量缺省时回落到该计数。理由是实例数属于"用户建过一次的形态"：只需一个新 token 的刷新若把两实例的目标悄悄降成一实例，会静默减少并发能力，比报错更难发现。注册 token 是唯一例外——它有效期 1 小时，从不作为默认值复用，必须每次重新提供。
+
 ## Risks / Trade-offs
 
 - [Podman < 4.4（Debian 12 为 4.3、Ubuntu 22.04 为 3.4）导致 Quadlet 不可用] → 安装前检查版本与生成器文件，失败时给出发行版对应的升级路径（backports 或上游仓库）并退出，不做"降级到 `podman generate systemd`"的隐式回退。

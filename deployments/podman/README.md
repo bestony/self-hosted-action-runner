@@ -162,6 +162,22 @@ sudo GHR_MODE=add \
 
 `GHR_MODE=reconfigure` replaces the instance list instead (instances that are no
 longer configured have their units removed, so they stop consuming runner slots).
+It reads the existing `.env` first and lets `GHR_*` variables override it, so
+reconfiguring one field does not reset the others:
+
+```bash
+# new registration token, same topology (two instances, cache, labels, images)
+sudo GHR_MODE=reconfigure \
+  GHR_RUNNER_1_URL="https://github.com/org/repo-a" \
+  GHR_RUNNER_1_TOKEN="$(gh api -X POST orgs/org/actions/runners/registration-token --jq .token)" \
+  bash install-podman.sh --non-interactive --dir /opt/github-runner
+```
+
+The interactive flow behaves the same way: `R` re-enters the configuration with
+the recorded URL, instance count, labels, prefix, cache mode and images offered
+as defaults, so the refresh is a matter of pressing Enter — except for the
+registration token, which expires after one hour and is therefore never reused
+from `.env`.
 
 ## Cache server modes
 

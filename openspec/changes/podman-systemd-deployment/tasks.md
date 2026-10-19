@@ -78,9 +78,9 @@
 - [x] 8.4 精确化缓存可达性探测：区分"别名无法解析"（提示 netavark/dnsname 与后端查询）、"解析成功但缓存未应答"（指向缓存单元）与"探针跑不起来"（容器仍在重启），不再统一归因于 DNS。验证：Test 1/4/10 的 stub 路径不回归；失败分支文本随 8.5 文档一并交付。
 - [x] 8.5 运维文档：`deployments/podman/README.md` 新增 "Container egress and host firewalls" 章节（含 ufw 与 nftables 优先级冲突的原理、`ufw route allow` 命令、手动复检命令、`GHR_SKIP_EGRESS_CHECK` 说明）与故障排查行（网络已存在噪声、出网挂死、404 token 作用域/有效期、`Start request repeated too quickly`、凭据在但未上线、缓存探测三种成因）。
 - [x] 8.6 修正操作提示：`curl ... | sudo bash` 场景下 `$0` 为 `bash`、`BASH_SOURCE[0]` 为空，结尾提示曾渲染成 `sudo bash bash --dir ...`。新增 `installer_command`（有脚本文件时输出绝对路径，管道安装时输出 `curl ... | sudo bash -s --`），统一替换 `.env`/单元头/`README.txt`/状态表/失败结语中的 14 处提示。验证：Test 1 断言 `README.txt` 含 `--upgrade` 提示且整体测试保持通过。
-- [x] 8.7 回归验证：`shellcheck -x`（全脚本）通过；`tests/podman_install_test.sh` 在 macOS 上 144 passed / 0 failed（Test 13 SKIP），在 ubuntu:24.04 + Podman 4.9.3 + systemd 容器内 157 passed / 0 failed；`tests/install_test.sh` 49 passed / 0 failed；`openspec validate podman-systemd-deployment --strict` 通过。
+- [x] 8.7 回归验证：`shellcheck -x`（全脚本）通过；`tests/podman_install_test.sh` 在 macOS 上 144 passed / 0 failed（Test 13 SKIP），在 ubuntu:24.04 + Podman 4.9.3 + systemd 容器内 157 passed / 0 failed；`tests/install_test.sh` 49 passed / 0 failed；`openspec validate podman-systemd-deployment --strict` 通过。后续 8.8 追加 Test 18 后 macOS 为 158 passed / 0 failed，Linux 复跑与 CI（ubuntu-24.04，含真生成器 Test 13）为最终判据。
 
-## Workflow follow-up
+- [x] 8.8 修正重配形态丢失：`.env` 记录是"每实例一行"，重配时收集列表被清空，交互式重跑在实例数提示上给出的默认值是 1 而非记录值，因此在两实例的目标上按回车会把 stack 静默降为一个 runner（实测复现：`runner-2` 单元被删、并发数减半）；非交互式 `GHR_MODE=reconfigure` 此前完全不加载 `.env`，只传 URL+token 也会同样缩水。修复：重配前把记录中的 URL 列表另存为 `RECORDED_URLS`，交互式流程把记录 URL 与"同 URL 条目数"作为 URL/实例数提示默认值；非交互式重配与 `add` 一样先加载 `.env`（`GHR_*` 仍优先），实例数缺省时回落到记录值。token 始终要求重新提供，不复用记录值。验证：Test 18（交互式按回车保持 2 实例与缓存设置、提示默认值文本、`runner-2` 单元保留；非交互式只传 URL+token 保持实例数/缓存开关/缓存模式，且新 token 写入每个实例的派生 env 文件）。\n\n## Workflow follow-up
 
 - 在具备 root 与 systemd 的 Podman 主机（Podman ≥ 4.4）上执行一次真实端到端安装：确认 `podman-system-generator` 解析、`systemctl` 托管、runner 注册成功与开机自启有效，并记录结果。
   - 已完成的替代验证：容器内以真实 Podman 4.9.3 + systemd 255 执行生成器，确认单元被解析、`systemd-analyze verify` 接受、`.wants` 开机自启符号链接生成（见 3.2）。
