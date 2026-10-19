@@ -199,6 +199,19 @@ case "${1:-}" in
     logs)
         echo "stub container logs"
         ;;
+    network)
+        # Bridge name reported to the egress preflight, when a test sets one.
+        if [ "${2:-}" = "inspect" ] && [ -n "${STUB_PODMAN_NETWORK_IFACE:-}" ]; then
+            printf '%s\n' "${STUB_PODMAN_NETWORK_IFACE}"
+        fi
+        ;;
+    run)
+        # The installer probes container egress with a short-lived container;
+        # tests decide what that probe reports.
+        if [ -n "${STUB_PODMAN_RUN_OUTPUT:-}" ]; then
+            printf '%s\n' "${STUB_PODMAN_RUN_OUTPUT}"
+        fi
+        ;;
 esac
 exit 0
 STUB
@@ -305,6 +318,13 @@ assert_contains "$RUNNER1_UNIT" "LogDriver=journald" "Container logs go to the j
 assert_contains "$RUNNER1_UNIT" "Wants=${PROJECT_NAME}-cache.service" "Runner waits for the cache service (soft ordering)"
 assert_contains "$RUNNER1_UNIT" "Volume=${TEST1_DIR}/work/runner-1:${TEST1_DIR}/work/runner-1" "Workspace keeps the same path inside and outside the container"
 assert_contains "$RUNNER1_UNIT" "Restart=always" "Unit restarts the container on failure"
+assert_contains "$RUNNER1_UNIT" "RestartSec=10" "Unit paces restarts instead of hot-looping against the GitHub API"
+assert_contains "$RUNNER1_UNIT" "StartLimitIntervalSec=0" "Unit keeps retrying instead of parking in 'failed' after a fast failure"
+assert_contains "$CACHE_UNIT" "StartLimitIntervalSec=0" "Cache unit keeps retrying as well"
+# Quadlet rejects keys that belong to another group, so the section matters.
+assert_equals "true" \
+    "$([ "$(grep -n '^StartLimitIntervalSec=0$' "$RUNNER1_UNIT" | head -1 | cut -d: -f1)" -lt "$(grep -n '^\[Container\]$' "$RUNNER1_UNIT" | head -1 | cut -d: -f1)" ] && echo true || echo false)" \
+    "StartLimitIntervalSec sits in the [Unit] section"
 assert_contains "$RUNNER1_UNIT" "WantedBy=multi-user.target default.target" "Unit declares boot startup through [Install] WantedBy"
 
 assert_contains "$CACHE_UNIT" "Network=${PROJECT_NAME}-net:alias=cache-server" "Internal cache mode registers the cache-server network alias"
@@ -356,7 +376,7 @@ TEST3_DIR="$(mktemp -d "${BASE_TMP}/t3-XXXXXX")"
 
 reset_stub_logs
 set +e
-STUB_JOURNAL_TEXT="Http response code: NotFound" \
+STUB_JOURNAL_TEXT="Http response code: NotFound from 'POST https://api.github.com/actions/runner-registration'" \
 GHR_RUNNER_1_URL="https://github.com/my-org/broken" \
 GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_D_22222" \
 GHR_CACHE=0 \
@@ -801,6 +821,156 @@ set -e
 assert_failure "$TEST15B_EC" "Missing Podman with --skip-podman-install fails the install"
 assert_contains "${BASE_TMP}/test15b.log" "--skip-podman-install was specified" "The failure names the flag that blocked installation"
 assert_path_missing "${BASE_TMP}/t15-missing/.env" "Missing Podman fails before any configuration is written"
+
+# ------------------------------------------------------------------------------
+# Test 16: Registration verification must not report success it cannot back up
+# ------------------------------------------------------------------------------
+printf "\nTest 16: Registration verification edge cases\n"
+
+# (a) First boot: the entrypoint logs "No existing runner configuration
+# detected". It contains the words of the reuse message, and reading it as one
+# reported success for a runner that was restart-looping on a rejected token.
+printf "\n  (a) 'No existing runner configuration detected' is not a success\n"
+TEST16A_DIR="$(mktemp -d "${BASE_TMP}/t16a-XXXXXX")"
+reset_stub_logs
+set +e
+STUB_JOURNAL_TEXT="No existing runner configuration detected (.runner missing). Performing initial registration..." \
+GHR_REGISTRATION_WAIT=2 \
+GHR_RUNNER_1_URL="https://github.com/my-org/first-boot" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_M_11111" \
+GHR_CACHE=0 \
+run_installer --non-interactive --dir "$TEST16A_DIR" > "${BASE_TMP}/test16a.log" 2>&1
+TEST16A_EC=$?
+set -e
+assert_success "$TEST16A_EC" "An unverifiable registration is reported as a warning, not a hard failure"
+assert_not_contains "${BASE_TMP}/test16a.log" "OK Runner #1 registered" "First-boot log text is never reported as a registered runner"
+assert_contains "${BASE_TMP}/test16a.log" "No registration result within" "The operator is told that no registration result was observed"
+
+# (b) Reused credentials plus the listener marker is a success.
+printf "\n  (b) Reused credentials that come online are reported as OK\n"
+TEST16B_DIR="$(mktemp -d "${BASE_TMP}/t16b-XXXXXX")"
+reset_stub_logs
+set +e
+STUB_JOURNAL_TEXT="Existing runner configuration detected (.runner present). Skipping registration.
+Listening for Jobs" \
+GHR_REGISTRATION_WAIT=5 \
+GHR_RUNNER_1_URL="https://github.com/my-org/reused" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_N_22222" \
+GHR_CACHE=0 \
+run_installer --non-interactive --dir "$TEST16B_DIR" > "${BASE_TMP}/test16b.log" 2>&1
+TEST16B_EC=$?
+set -e
+assert_success "$TEST16B_EC" "A reused configuration that reports itself online installs successfully"
+assert_contains "${BASE_TMP}/test16b.log" "OK Runner #1 registered (OK_LISTENING)" "Success is based on the listener marker"
+
+# (c) Credentials exist but the runner never comes online: not a success.
+printf "\n  (c) Credentials without a listener are not reported as a success\n"
+TEST16C_DIR="$(mktemp -d "${BASE_TMP}/t16c-XXXXXX")"
+reset_stub_logs
+set +e
+STUB_JOURNAL_TEXT="Existing runner configuration detected (.runner present). Skipping registration." \
+GHR_REGISTRATION_WAIT=2 \
+GHR_RUNNER_1_URL="https://github.com/my-org/stale-creds" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_O_33333" \
+GHR_CACHE=0 \
+run_installer --non-interactive --dir "$TEST16C_DIR" > "${BASE_TMP}/test16c.log" 2>&1
+TEST16C_EC=$?
+set -e
+assert_success "$TEST16C_EC" "Present credentials alone do not fail the install"
+assert_not_contains "${BASE_TMP}/test16c.log" "OK Runner #1 registered" "Present credentials alone are not reported as a registered runner"
+assert_contains "${BASE_TMP}/test16c.log" "Credentials are in place, but the runner did not report" "The operator is told that the runner never reported itself online"
+
+# (d) A stale success from an earlier container must not outvote a fresh failure.
+printf "\n  (d) A fresh failure outvotes an earlier success in the same log\n"
+TEST16D_DIR="$(mktemp -d "${BASE_TMP}/t16d-XXXXXX")"
+reset_stub_logs
+set +e
+STUB_JOURNAL_TEXT="Listening for Jobs
+Http response code: NotFound from 'POST https://api.github.com/actions/runner-registration'" \
+GHR_REGISTRATION_WAIT=5 \
+GHR_RUNNER_1_URL="https://github.com/my-org/restarted" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_P_44444" \
+GHR_CACHE=0 \
+run_installer --non-interactive --dir "$TEST16D_DIR" > "${BASE_TMP}/test16d.log" 2>&1
+TEST16D_EC=$?
+set -e
+assert_failure "$TEST16D_EC" "A container that failed after an earlier success fails the install"
+assert_contains "${BASE_TMP}/test16d.log" "Registration failed (404" "The newest failure is the reported state"
+
+# ------------------------------------------------------------------------------
+# Test 17: Container egress preflight
+# ------------------------------------------------------------------------------
+printf "\nTest 17: Container egress preflight\n"
+TEST17_DIR="$(mktemp -d "${BASE_TMP}/t17-XXXXXX")"
+
+printf "\n  (a) A successful probe installs without warnings and uses --entrypoint\n"
+reset_stub_logs
+set +e
+STUB_PODMAN_RUN_OUTPUT="PROBE_OK" \
+GHR_RUNNER_1_URL="https://github.com/my-org/egress-ok" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_Q_55555" \
+GHR_CACHE=0 \
+run_installer --non-interactive --dir "$TEST17_DIR" > "${BASE_TMP}/test17a.log" 2>&1
+TEST17A_EC=$?
+set -e
+assert_success "$TEST17A_EC" "A reachable GitHub API passes the egress preflight"
+assert_contains "${BASE_TMP}/test17a.log" "can reach the GitHub API" "The passing probe is reported"
+assert_equals "1" "$(count_pattern "${STUB_LOG}/podman.log" '^podman run .*--entrypoint /bin/sh')" "The probe overrides the image entrypoint so it cannot register a runner"
+
+printf "\n  (b) Blocked forwarding fails the install with the host fix\n"
+TEST17B_DIR="$(mktemp -d "${BASE_TMP}/t17b-XXXXXX")"
+set +e
+STUB_PODMAN_RUN_OUTPUT="PROBE_EGRESS_FAILED" \
+STUB_PODMAN_NETWORK_IFACE="podman1" \
+GHR_RUNNER_1_URL="https://github.com/my-org/egress-blocked" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_R_66666" \
+GHR_CACHE=0 \
+run_installer --non-interactive --dir "$TEST17B_DIR" > "${BASE_TMP}/test17b.log" 2>&1
+TEST17B_EC=$?
+set -e
+assert_failure "$TEST17B_EC" "Blocked container egress stops the installation"
+assert_contains "${BASE_TMP}/test17b.log" "cannot reach the GitHub API even though DNS resolves" "The diagnosis names dropped forwarding"
+assert_contains "${BASE_TMP}/test17b.log" "sudo ufw route allow in on podman1" "The operator gets the concrete host fix for the detected bridge"
+assert_contains "${BASE_TMP}/test17b.log" "GHR_SKIP_EGRESS_CHECK=yes" "The escape hatch is documented in the failure"
+
+printf "\n  (b2) Without a reported bridge name the advice stays generic\n"
+set +e
+STUB_PODMAN_RUN_OUTPUT="PROBE_EGRESS_FAILED" \
+GHR_RUNNER_1_URL="https://github.com/my-org/egress-no-iface" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_R2_66667" \
+GHR_CACHE=0 \
+run_installer --non-interactive --dir "$(mktemp -d "${BASE_TMP}/t17b2-XXXXXX")" > "${BASE_TMP}/test17b2.log" 2>&1
+TEST17B2_EC=$?
+set -e
+assert_failure "$TEST17B2_EC" "An unknown bridge name still stops the installation"
+assert_contains "${BASE_TMP}/test17b2.log" "Allow forwarding from the container bridge" "The generic forwarding advice is used when the bridge name is unknown"
+
+printf "\n  (c) A DNS failure and a missing probe image are reported differently\n"
+TEST17C_DIR="$(mktemp -d "${BASE_TMP}/t17c-XXXXXX")"
+set +e
+STUB_PODMAN_RUN_OUTPUT="PROBE_DNS_FAILED" \
+GHR_RUNNER_1_URL="https://github.com/my-org/egress-dns" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_S_77777" \
+GHR_CACHE=0 \
+run_installer --non-interactive --dir "$TEST17C_DIR" > "${BASE_TMP}/test17c.log" 2>&1
+TEST17C_EC=$?
+set -e
+assert_failure "$TEST17C_EC" "A container DNS failure stops the installation"
+assert_contains "${BASE_TMP}/test17c.log" "cannot resolve api.github.com" "DNS failures are distinguished from blocked forwarding"
+
+TEST17D_DIR="$(mktemp -d "${BASE_TMP}/t17d-XXXXXX")"
+reset_stub_logs
+set +e
+GHR_SKIP_EGRESS_CHECK=yes \
+GHR_RUNNER_1_URL="https://github.com/my-org/egress-skipped" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_T_88888" \
+GHR_CACHE=0 \
+run_installer --non-interactive --dir "$TEST17D_DIR" > "${BASE_TMP}/test17d.log" 2>&1
+TEST17D_EC=$?
+set -e
+assert_success "$TEST17D_EC" "GHR_SKIP_EGRESS_CHECK=yes installs without probing"
+assert_contains "${BASE_TMP}/test17d.log" "Skipping the container egress check" "The skipped check is stated explicitly"
+assert_equals "0" "$(count_pattern "${STUB_LOG}/podman.log" '^podman run')" "No probe container is started when the check is skipped"
 
 printf "\n==================================================\n"
 printf "Test Summary: %d passed, %d failed\n" "$PASSED" "$FAILED"
