@@ -133,6 +133,14 @@ curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/m
   working. The Podman API compatibility layer speaks Docker API v1.40 and does not
   support nested `docker compose`; containers created by workflows run as host root.
   Set `GHR_PODMAN_SOCKET=` (empty) to deploy without any socket mount.
+- **Host firewall**: containers must be allowed to reach `https://api.github.com`,
+  which means the host has to forward traffic from the container network. The
+  installer probes this before starting anything and prints the fix (for example
+  `sudo ufw route allow in on podman1`); `GHR_SKIP_EGRESS_CHECK=yes` skips the probe.
+  See [Container egress and host firewalls](deployments/podman/README.md#container-egress-and-host-firewalls).
+- **Restart semantics**: units carry `StartLimitIntervalSec=0` with `RestartSec=10`,
+  so a runner that cannot register yet keeps retrying (every ten seconds) instead of
+  being parked in systemd's `failed` state.
 
 See [deployments/podman/README.md](deployments/podman/README.md) for the unit
 layout, operations, cache mode trade-offs, uninstall/rollback and troubleshooting.

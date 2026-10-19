@@ -22,6 +22,7 @@ sudo bash install-podman.sh --non-interactive --dir /opt/github-runner \
 | Podman >= 4.4 (rootful) | Quadlet (`.container` units) and the `podman-system-generator` binary |
 | root or `sudo` | units live in the system Quadlet path and the stack runs as rootful Podman |
 | `podman.socket` | workflow containers reach the host Podman API through the mounted socket |
+| forwarded traffic from the container network | runners register and poll over HTTPS; a host firewall that drops forwarding breaks this |
 
 `install-podman.sh` verifies all of the above, refuses to run on macOS/Windows
 (`podman machine` has no host systemd to own units) and installs Podman through
@@ -29,6 +30,47 @@ the distribution package manager when it is missing.
 
 The installer prints a one-line remediation for the two most common refusals:
 a Podman version below 4.4 and a Podman build without Quadlet support.
+
+### Container egress and host firewalls
+
+Before starting the stack the installer runs a probe container on the stack
+network and requires it to resolve and reach `https://api.github.com`. Without
+that, registration fails with a five-minute `HttpClient.Timeout` per attempt and
+the runner restart-loops.
+
+Two firewall layouts break container egress on an otherwise healthy host:
+
+* **ufw keeps its forward policy at `DROP`** (`DEFAULT_FORWARD_POLICY="DROP"`,
+  `ufw status` reports `deny (routed)`). Podman 5.x installs its rules in
+  nftables (`table inet netavark`), while ufw's `DROP` policy lives in the
+  iptables `FORWARD` chain. Both hooks run at priority `filter`, iptables wins,
+  and every packet from the container subnet is dropped: DNS still resolves
+  (it is answered by the host) while TCP silently stalls.
+* **Docker and Podman on the same host** make that ordering harder to predict,
+  because Docker also writes its own `FORWARD` rules.
+
+Allow the container bridge, then re-run the installer:
+
+```bash
+# the bridge is the network_interface of the stack network
+podman network inspect <project>-net --format '{{.NetworkInterface}}'   # e.g. podman1
+
+sudo ufw route allow in on podman1
+sudo ufw route allow out on podman1
+```
+
+These rules are stored in `/etc/ufw/user.rules`, survive reboots and stay
+narrower than switching `DEFAULT_FORWARD_POLICY` to `ACCEPT`. Re-check the
+result at any time with:
+
+```bash
+podman run --rm --network <project>-net --entrypoint /bin/sh \
+  <runner-image> -c 'getent hosts api.github.com && curl -fsS -o /dev/null https://api.github.com/'
+```
+
+Set `GHR_SKIP_EGRESS_CHECK=yes` only when the host reaches GitHub through a
+proxy that the probe cannot use; the probe already inherits `HTTP_PROXY`,
+`HTTPS_PROXY` and `NO_PROXY`.
 
 ## File and unit layout
 
@@ -197,7 +239,11 @@ sudo bash install.sh --non-interactive --dir /opt/github-runner-docker
 |---|---|
 | `systemd does not know <unit>.service` | `QUADLET_UNIT_DIRS=/etc/containers/systemd podman-system-generator --dryrun` and `journalctl -u systemd-generators` |
 | Unit exists but starts nothing | `systemctl status <unit>`; a failed pull shows up in `journalctl -u <unit>` |
-| Runner registers, then exits | `journalctl -u <unit> -n 80`; `Http response code: 404` means the registration token expired |
-| Cache unreachable from a job | `podman exec <runner> wget -q -O- http://cache-server:3000/`; switch to `GHR_CACHE_MODE=host` if it fails |
+| `Error: network name <project>-net already used: network already exists` on every start | Expected noise: Quadlet's `ExecStartPre=-podman network create` finds the network the installer pre-created. The `-` prefix makes systemd ignore the failure |
+| Runner restarts every few seconds, log ends in `HttpClient.Timeout` or a five-minute stall | Containers cannot reach the GitHub API: see [Container egress and host firewalls](#container-egress-and-host-firewalls) |
+| Runner registers, then exits | `journalctl -u <unit> -n 120`; `Http response code: NotFound ... runner-registration` (404) means a registration token that is invalid, expired (they last one hour) or was issued for a different scope than the URL — a repository token with an organization URL fails this way |
+| `Start request repeated too quickly` and the unit stays `failed` | Only units generated before this behaviour was fixed hit it. `systemctl reset-failed <unit> && systemctl start <unit>`; regenerated units carry `StartLimitIntervalSec=0` and retry every `RestartSec=10` |
+| Installer reports `Credentials are in place, but the runner did not report 'Listening for Jobs'` | The volume holds credentials but the runner never came online: `journalctl -u <unit> -f`. Usually a runner that was deleted in GitHub, or an entitlement problem in the organization |
+| Cache unreachable from a job | `podman exec <runner> sh -c 'getent hosts cache-server; wget -q -O- http://cache-server:3000/'`; if the alias does not resolve, check `podman info --format '{{.Host.NetworkBackend}}'`; if it resolves but does not answer, check the cache unit |
 | Workflows cannot create containers | `podman exec <runner> docker info`; a missing socket means `GHR_PODMAN_SOCKET` was empty at install time |
 | Image tag does not update | `--upgrade` pulls and restarts; `AUTO_UPDATE=1` adds Quadlet `AutoUpdate=registry` |
