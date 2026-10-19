@@ -20,7 +20,7 @@ jobs:
 
       - name: Run ShellCheck
         run: |
-          shellcheck -x entrypoint.sh install.sh hooks/*.sh lib/*.sh bin/runner-doctor tests/*.sh
+          shellcheck -x entrypoint.sh install.sh install-podman.sh hooks/*.sh lib/*.sh bin/runner-doctor tests/*.sh
 
       - name: Run actionlint
         run: |
@@ -33,6 +33,10 @@ jobs:
       - name: Run installer test suite
         run: |
           bash tests/install_test.sh
+
+      - name: Run Podman installer test suite
+        run: |
+          bash tests/podman_install_test.sh
 
       - name: Validate Docker Compose configurations
         run: |
