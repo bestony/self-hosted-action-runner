@@ -87,13 +87,65 @@ curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/m
 
 ---
 
+## Podman + systemd (Quadlet) Installer
+
+Linux hosts that run Podman instead of Docker Engine use `install-podman.sh`. It
+generates [Quadlet](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)
+unit files, so **systemd** starts the stack on boot and owns its lifecycle:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install-podman.sh | sudo bash
+```
+
+It shares the interactive prompts, the `GHR_*` variables and the `.env` contract
+with `install.sh`; only the unit format and the lifecycle owner differ:
+
+| | `install.sh` (Docker) | `install-podman.sh` (Podman) |
+|---|---|---|
+| Unit of deployment | `docker-compose.yml` + `.env` | Quadlet `.container` files + `.env` |
+| Lifecycle owner | `docker compose` | systemd (`systemctl`, `journalctl`) |
+| Boot startup | `restart:` policy of the containers | `[Install] WantedBy=multi-user.target default.target` inside each unit |
+| Requirements | Docker Engine + Compose v2 | Linux with systemd as PID 1, rootful Podman >= 4.4 |
+| Per-target instances | `--instances`, `GHR_RUNNER_<n>_INSTANCES` | same |
+| Subcommands | `--uninstall` | `--status`, `--start`, `--stop`, `--restart`, `--upgrade`, `--uninstall` |
+
+```bash
+# non-interactive deployment next to the Docker path
+curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install-podman.sh | \
+  sudo bash -s -- --non-interactive --dir /opt/github-runner --skip-podman-install
+```
+
+### Podman Path Specifics
+- **Version floor**: Quadlet ships with Podman 4.4. The installer installs Podman
+  through the distribution package manager when it is missing, verifies the
+  version, verifies that `podman-system-generator` exists and fails with
+  remediation steps on older builds.
+- **Boot without `systemctl enable`**: Quadlet units are generated, so systemd
+  refuses to enable them. `[Install] WantedBy=` inside the generated unit is what
+  starts the stack at boot.
+- **Upgrades**: `--upgrade` pulls `RUNNER_IMAGE` / `CACHE_IMAGE` and restarts every
+  unit; `AUTO_UPDATE=1` additionally sets Quadlet `AutoUpdate=registry`.
+- **Cache server**: `internal` (default, cache reachable as `http://cache-server:3000/`
+  over the stack network, no published port) or `host` (publishes `<port>:3000` for
+  jobs that use `container:`). `GHR_CACHE_MODE` selects the mode.
+- **Container jobs (DooD)**: the host Podman socket is mounted as both
+  `/var/run/docker.sock` and `/run/podman/podman.sock`, so `docker`-style steps keep
+  working. The Podman API compatibility layer speaks Docker API v1.40 and does not
+  support nested `docker compose`; containers created by workflows run as host root.
+  Set `GHR_PODMAN_SOCKET=` (empty) to deploy without any socket mount.
+
+See [deployments/podman/README.md](deployments/podman/README.md) for the unit
+layout, operations, cache mode trade-offs, uninstall/rollback and troubleshooting.
+
+---
+
 ## Deployment Options Matrix
 
-| Topology | Docker Compose | CapRover | Kubernetes |
-|---|---|---|---|
-| **Single Runner** | [docker-compose.yml](docker-compose.yml) | [Single App Guide](deployments/caprover/README.md) | [Deployment + PVC](deployments/kubernetes/README.md#option-b-single-runner-deployment) |
-| **Multi-Runner (Independent)** | [docker-compose.multi.yml](deployments/docker-compose/docker-compose.multi.yml) | [Multi-App Setup](deployments/caprover/README.md#option-b-independent-single-runner-apps) | [StatefulSet Cluster](deployments/kubernetes/README.md#option-a-scalable-cluster-statefulset) |
-| **Multi-Runner + Shared Cache** | [Multi-Repo Cache Compose](deployments/docker-compose/multi-repo-cache/README.md) | [One-Click App Template](deployments/caprover/multi-repo-cache/README.md) | [Kustomize Manifests](deployments/kubernetes/multi-repo-cache/README.md) |
+| Topology | Docker Compose | CapRover | Kubernetes | Podman + systemd |
+|---|---|---|---|---|
+| **Single Runner** | [docker-compose.yml](docker-compose.yml) | [Single App Guide](deployments/caprover/README.md) | [Deployment + PVC](deployments/kubernetes/README.md#option-b-single-runner-deployment) | [Podman Deployment](deployments/podman/README.md) |
+| **Multi-Runner (Independent)** | [docker-compose.multi.yml](deployments/docker-compose/docker-compose.multi.yml) | [Multi-App Setup](deployments/caprover/README.md#option-b-independent-single-runner-apps) | [StatefulSet Cluster](deployments/kubernetes/README.md#option-a-scalable-cluster-statefulset) | [Adding Runners Later](deployments/podman/README.md#adding-runners-later) |
+| **Multi-Runner + Shared Cache** | [Multi-Repo Cache Compose](deployments/docker-compose/multi-repo-cache/README.md) | [One-Click App Template](deployments/caprover/multi-repo-cache/README.md) | [Kustomize Manifests](deployments/kubernetes/multi-repo-cache/README.md) | [Cache Server Modes](deployments/podman/README.md#cache-server-modes) |
 
 ---
 
@@ -333,5 +385,6 @@ To run matrix jobs in parallel, register more than one runner: run the installer
 ## 6. More Information
 
 For comprehensive documentation, refer to:
+- [deployments/podman/README.md](deployments/podman/README.md): Podman + systemd (Quadlet) deployment, unit layout, cache modes, uninstall and rollback.
 - [development.md](development.md): Architecture details, environment variable reference, DooD workspace setup, multi-platform image builds, Kubernetes / CapRover deployments, and CI/CD automation.
 - [GitHub Repository](https://github.com/bestony/self-hosted-action-runner): Source code, release notes, and issue tracker.
