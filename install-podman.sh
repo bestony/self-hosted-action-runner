@@ -2319,15 +2319,32 @@ verify_container_egress() {
     done
 
     # The entrypoint must be overridden, otherwise the probe container would try
-    # to register a real runner.
-    local probe='getent hosts api.github.com >/dev/null 2>&1 || { echo PROBE_DNS_FAILED; exit 0; }; curl -fsS -m 20 -o /dev/null https://api.github.com/ && echo PROBE_OK || echo PROBE_EGRESS_FAILED'
+    # to register a real runner. Success is "an HTTP response came back", not
+    # "the response was 2xx": GitHub answers 403/429 for unauthenticated requests
+    # from a rate-limited address, which says nothing about the network. Only DNS
+    # failures and curl's own failures (no code, 000) mean the path is broken.
+    # shellcheck disable=SC2016  # $code is expanded inside the probe container
+    local probe='getent hosts api.github.com >/dev/null 2>&1 || { echo PROBE_DNS_FAILED; exit 0; }
+code="$(curl -sS -m 20 -o /dev/null -w "%{http_code}" https://api.github.com/ 2>/dev/null || true)"
+case "$code" in
+    ""|000) echo PROBE_EGRESS_FAILED ;;
+    *) echo "PROBE_HTTP_${code}" ;;
+esac'
     local out=""
     out="$(run_podman run --rm --network "$net" ${proxy_env[@]+"${proxy_env[@]}"} \
         --entrypoint /bin/sh "$RUNNER_IMAGE" -c "$probe" 2>&1 || true)"
 
     case "$out" in
-        *PROBE_OK*)
+        *PROBE_HTTP_20*)
             log_info "Containers on ${net} can reach the GitHub API."
+            return 0
+            ;;
+        *PROBE_HTTP_*)
+            # Reachable, but GitHub refused the anonymous request: rate limiting,
+            # not a broken network. Say so instead of implying a healthy API.
+            local code="${out##*PROBE_HTTP_}"
+            code="${code%%[!0-9]*}"
+            log_info "Containers on ${net} reach the GitHub API (HTTP ${code}); the anonymous probe was refused, which is expected for a rate-limited address."
             return 0
             ;;
         *PROBE_DNS_FAILED*)

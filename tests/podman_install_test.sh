@@ -906,7 +906,7 @@ TEST17_DIR="$(mktemp -d "${BASE_TMP}/t17-XXXXXX")"
 printf "\n  (a) A successful probe installs without warnings and uses --entrypoint\n"
 reset_stub_logs
 set +e
-STUB_PODMAN_RUN_OUTPUT="PROBE_OK" \
+STUB_PODMAN_RUN_OUTPUT="PROBE_HTTP_200" \
 GHR_RUNNER_1_URL="https://github.com/my-org/egress-ok" \
 GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_Q_55555" \
 GHR_CACHE=0 \
@@ -916,6 +916,19 @@ set -e
 assert_success "$TEST17A_EC" "A reachable GitHub API passes the egress preflight"
 assert_contains "${BASE_TMP}/test17a.log" "can reach the GitHub API" "The passing probe is reported"
 assert_equals "1" "$(count_pattern "${STUB_LOG}/podman.log" '^podman run .*--entrypoint /bin/sh')" "The probe overrides the image entrypoint so it cannot register a runner"
+
+printf "\n  (a2) An anonymous rate limit (403) is reachability, not a failure\n"
+TEST17A2_DIR="$(mktemp -d "${BASE_TMP}/t17a2-XXXXXX")"
+set +e
+STUB_PODMAN_RUN_OUTPUT="PROBE_HTTP_403" \
+GHR_RUNNER_1_URL="https://github.com/my-org/egress-rate-limited" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_Q2_55556" \
+GHR_CACHE=0 \
+run_installer --non-interactive --dir "$TEST17A2_DIR" > "${BASE_TMP}/test17a2.log" 2>&1
+TEST17A2_EC=$?
+set -e
+assert_success "$TEST17A2_EC" "A 403 from the anonymous probe does not block the installation"
+assert_contains "${BASE_TMP}/test17a2.log" "reach the GitHub API (HTTP 403)" "The refusal is reported as a rate limit, not as a broken network"
 
 printf "\n  (b) Blocked forwarding fails the install with the host fix\n"
 TEST17B_DIR="$(mktemp -d "${BASE_TMP}/t17b-XXXXXX")"

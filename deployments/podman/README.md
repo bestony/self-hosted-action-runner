@@ -65,8 +65,16 @@ result at any time with:
 
 ```bash
 podman run --rm --network <project>-net --entrypoint /bin/sh \
-  <runner-image> -c 'getent hosts api.github.com && curl -fsS -o /dev/null https://api.github.com/'
+  <runner-image> -c 'getent hosts api.github.com && \
+    curl -sS -m 20 -o /dev/null -w "reachable: HTTP %{http_code}\n" https://api.github.com/'
 ```
+
+Any HTTP status means the path works. `403`/`429` are GitHub rate-limiting the
+*anonymous* request from your address, which says nothing about the runner: the
+runner authenticates with its own token and has a separate quota. The installer
+probe is judged the same way — only a DNS failure or no response at all is
+treated as broken. A hang (`errormsg` empty, no output) or curl's `000` is the
+signature of dropped forwarding.
 
 Set `GHR_SKIP_EGRESS_CHECK=yes` only when the host reaches GitHub through a
 proxy that the probe cannot use; the probe already inherits `HTTP_PROXY`,
