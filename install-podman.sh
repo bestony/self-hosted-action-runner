@@ -108,6 +108,10 @@ declare -a RUNNER_TOKENS=()
 declare -a RUNNER_LABELS=()
 declare -a RUNNER_PREFIXES=()
 declare -a RUNNER_WORKDIR_LIST=()
+# URLs read from an existing .env before a reconfigure resets the collection:
+# the record is flattened per instance, and re-prompting without these defaults
+# would silently drop instances the operator never asked to remove.
+declare -a RECORDED_URLS=()
 
 CACHE_ENABLED=true
 CACHE_MODE="internal"
@@ -1019,6 +1023,36 @@ reset_runner_arrays() {
     RUNNER_WORKDIR_LIST=()
 }
 
+# The .env record stores one entry per runner instance, so a position in it
+# restores the target list and the number of entries sharing a URL restores that
+# target's instance count. Both are prompt defaults: a reconfigure re-run keeps
+# the topology unless the operator deliberately changes it.
+recorded_url_at() {
+    local want_idx="$1"
+    local idx=1
+    local entry=""
+    for entry in ${RECORDED_URLS[@]+"${RECORDED_URLS[@]}"}; do
+        if [ "$idx" -eq "$want_idx" ]; then
+            printf '%s' "$entry"
+            break
+        fi
+        idx=$((idx + 1))
+    done
+    return 0
+}
+
+recorded_instance_count() {
+    local url="$1"
+    local count=0
+    local entry=""
+    for entry in ${RECORDED_URLS[@]+"${RECORDED_URLS[@]}"}; do
+        if [ "$entry" = "$url" ]; then
+            count=$((count + 1))
+        fi
+    done
+    printf '%s' "$count"
+}
+
 # ------------------------------------------------------------------------------
 # Configuration Collection - Interactive
 # ------------------------------------------------------------------------------
@@ -1075,6 +1109,7 @@ collect_interactive_config() {
     fi
 
     if [ "$mode" = "reconfigure" ]; then
+        RECORDED_URLS=(${RUNNER_URLS[@]+"${RUNNER_URLS[@]}"})
         reset_runner_arrays
         CACHE_PORT=""
     fi
@@ -1088,8 +1123,10 @@ collect_interactive_config() {
         printf "\n--- Configuring Runner #%d ---\n" "$runner_num"
 
         local r_url=""
+        local url_default=""
+        url_default="$(recorded_url_at "$runner_num")"
         while true; do
-            r_url="$(prompt_input "GitHub Repository or Organization URL (e.g. https://github.com/org/repo)")"
+            r_url="$(prompt_input "GitHub Repository or Organization URL (e.g. https://github.com/org/repo)" "$url_default")"
             if [ -z "$r_url" ]; then
                 log_error "URL cannot be empty."
                 continue
@@ -1126,7 +1163,13 @@ collect_interactive_config() {
         local r_labels
         r_labels="$(prompt_input "Runner labels (comma-separated)" "$DEFAULT_LABELS")"
 
-        local default_inst="${GHR_RUNNER_INSTANCES:-${GHR_INSTANCES:-1}}"
+        local default_inst="${GHR_RUNNER_INSTANCES:-${GHR_INSTANCES:-}}"
+        if [ -z "$default_inst" ]; then
+            default_inst="$(recorded_instance_count "$r_url")"
+            if [ "$default_inst" = "0" ]; then
+                default_inst=1
+            fi
+        fi
         local r_instances
         while true; do
             r_instances="$(prompt_input "Number of runner instances for this target (to run jobs concurrently)" "$default_inst")"
@@ -1256,7 +1299,9 @@ collect_non_interactive_config() {
     #   add         - existing .env is loaded and new instances are appended
     #   reconfigure - existing .env is loaded for defaults, the instance list restarts empty
     if [ -f "$env_file" ]; then
-        if [ "$mode" = "add" ]; then
+        if [ "$mode" = "add" ] || [ "$mode" = "reconfigure" ]; then
+            # Both modes continue an existing stack: .env supplies the defaults
+            # and GHR_* variables override them.
             apply_env_record "$env_file"
         elif [ -z "$PROJECT_NAME" ]; then
             PROJECT_NAME="$(read_env_value PROJECT_NAME "$env_file" || true)"
@@ -1272,6 +1317,7 @@ collect_non_interactive_config() {
     fi
 
     if [ "$mode" != "add" ]; then
+        RECORDED_URLS=(${RUNNER_URLS[@]+"${RUNNER_URLS[@]}"})
         reset_runner_arrays
         CACHE_PORT=""
     fi
@@ -1321,7 +1367,14 @@ collect_non_interactive_config() {
         local custom_workdir="${!var_workdir:-}"
 
         local var_instances="GHR_RUNNER_${scan_idx}_INSTANCES"
-        local instances="${!var_instances:-${GHR_RUNNER_INSTANCES:-${GHR_INSTANCES:-1}}}"
+        local instances="${!var_instances:-${GHR_RUNNER_INSTANCES:-${GHR_INSTANCES:-}}}"
+        if [ -z "$instances" ]; then
+            # Not passing an instance count must not shrink an existing target.
+            instances="$(recorded_instance_count "$url")"
+            if [ "$instances" = "0" ]; then
+                instances=1
+            fi
+        fi
         if ! [[ "$instances" =~ ^[1-9][0-9]*$ ]]; then
             log_warn "Invalid instances value '${instances}' for runner ${scan_idx}. Defaulting to 1."
             instances=1

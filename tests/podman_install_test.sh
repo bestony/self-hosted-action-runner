@@ -985,6 +985,72 @@ assert_success "$TEST17D_EC" "GHR_SKIP_EGRESS_CHECK=yes installs without probing
 assert_contains "${BASE_TMP}/test17d.log" "Skipping the container egress check" "The skipped check is stated explicitly"
 assert_equals "0" "$(count_pattern "${STUB_LOG}/podman.log" '^podman run')" "No probe container is started when the check is skipped"
 
+# ------------------------------------------------------------------------------
+# Test 18: Reconfigure keeps the recorded topology
+# ------------------------------------------------------------------------------
+printf "\nTest 18: Reconfigure keeps the recorded topology\n"
+TEST18_DIR="$(mktemp -d "${BASE_TMP}/t18-XXXXXX")"
+
+set +e
+GHR_RUNNER_1_URL="https://github.com/my-org/two" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_U_99991" \
+GHR_RUNNER_1_INSTANCES=2 \
+GHR_CACHE=internal \
+run_installer --non-interactive --no-start --dir "$TEST18_DIR" > "${BASE_TMP}/test18-seed.log" 2>&1
+TEST18_SEED_EC=$?
+set -e
+assert_success "$TEST18_SEED_EC" "Seed install configures a two-instance target"
+
+PROJECT18="$(env_value_of PROJECT_NAME "${TEST18_DIR}/.env")"
+
+# (a) Interactive reconfigure: the recorded topology comes back as prompt
+# defaults, so pressing Enter must not shrink two runners down to one.
+printf '%s\n' \
+    "R" \
+    "" \
+    "SECRET_PODMAN_TOKEN_V_99992" \
+    "" \
+    "" \
+    "" \
+    "n" \
+    "" \
+    "" \
+    "" \
+    "" \
+    "y" > "${BASE_TMP}/test18-input.txt"
+
+set +e
+GHR_PROMPT_STDIN=1 GHR_UNSAFE_SKIP_PLATFORM_CHECKS=1 \
+GHR_QUADLET_DIR="${QUADLET_DIR}" \
+STUB_LOG="${STUB_LOG}" \
+STUB_JOURNAL_TEXT="${STUB_JOURNAL_TEXT:-Listening for Jobs}" \
+PATH="${STUB_DIR}:${PATH}" \
+    bash "${INSTALL_SH}" --no-start --dir "$TEST18_DIR" \
+    < "${BASE_TMP}/test18-input.txt" > "${BASE_TMP}/test18a.log" 2>&1
+TEST18A_EC=$?
+set -e
+assert_success "$TEST18A_EC" "Interactive reconfigure completes on Enter-only answers"
+assert_contains "${BASE_TMP}/test18a.log" "[default: https://github.com/my-org/two]" "The recorded URL is offered as the prompt default"
+assert_contains "${BASE_TMP}/test18a.log" "Number of runner instances for this target (to run jobs concurrently) [default: 2]" "The recorded instance count is offered as the prompt default"
+assert_equals "2" "$(env_value_of RUNNER_COUNT "${TEST18_DIR}/.env")" "Reconfigure keeps the instance count"
+assert_equals "true" "$(env_value_of CACHE_ENABLED "${TEST18_DIR}/.env")" "Reconfigure keeps the cache setting"
+assert_path_exists "${QUADLET_DIR}/${PROJECT18}-runner-2.container" "The second instance unit survives a reconfigure"
+
+# (b) Non-interactive reconfigure with only URL and token: GHR_* override the
+# record, everything else comes from it instead of collapsing to defaults.
+set +e
+GHR_MODE=reconfigure \
+GHR_RUNNER_1_URL="https://github.com/my-org/two" \
+GHR_RUNNER_1_TOKEN="SECRET_PODMAN_TOKEN_W_99993" \
+run_installer --non-interactive --no-start --dir "$TEST18_DIR" > "${BASE_TMP}/test18b.log" 2>&1
+TEST18B_EC=$?
+set -e
+assert_success "$TEST18B_EC" "Non-interactive reconfigure completes with only URL and token"
+assert_equals "2" "$(env_value_of RUNNER_COUNT "${TEST18_DIR}/.env")" "Non-interactive reconfigure keeps the instance count"
+assert_equals "true" "$(env_value_of CACHE_ENABLED "${TEST18_DIR}/.env")" "Non-interactive reconfigure keeps the cache setting"
+assert_equals "internal" "$(env_value_of CACHE_MODE "${TEST18_DIR}/.env")" "Non-interactive reconfigure keeps the cache mode"
+assert_contains "${TEST18_DIR}/env/${PROJECT18}-runner-2.env" "RUNNER_TOKEN=SECRET_PODMAN_TOKEN_W_99993" "The new token reaches every instance"
+
 printf "\n==================================================\n"
 printf "Test Summary: %d passed, %d failed\n" "$PASSED" "$FAILED"
 printf "==================================================\n"
