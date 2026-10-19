@@ -24,6 +24,7 @@
   - 验证结果：Test 1 断言 `.env`、runner env、cache env 均为 600，token 位于 runner env，且键名与 `docker-compose.yml`/`entrypoint.sh` 契约一致（`RUNNER_URL/TOKEN/NAME_PREFIX/LABELS/WORKDIR`、`ACTIONS_RESULTS_URL`、透传键）。
 - [x] 3.2 生成 Quadlet `.container` 单元：镜像、`EnvironmentFile`、`/runner` 命名卷、工作区同路径绑定挂载、`Network`、`LogDriver=journald`、`SecurityLabelDisable`、`Restart`/超时、`[Install] WantedBy=`。验证：测试断言关键指令存在、单元不含 token、脚本从不调用 `systemctl enable`；有 Podman 的环境用 `podman-system-generator --dryrun` 确认可解析。
   - 验证结果：Test 1/14 断言上述全部指令、`WantedBy=multi-user.target default.target`、单元不含 token、全程零次 `systemctl enable`；Test 13 在有 `podman-system-generator` 的主机上执行 `--dryrun` 断言单元被解析为 service（macOS 本机无生成器时标记 SKIP）。
+  - 生成器实测（Ubuntu 24.04 + Podman 4.9.3 + systemd 255，容器内执行真实生成器）：生成器会自行创建 `multi-user.target.wants/` 与 `default.target.wants/` 符号链接——这正是"生成单元不能 `systemctl enable`"前提下开机自启的来源；两个 service 均被 `systemd-analyze verify` 接受且无任何输出；生成器对两个单元均未报告 `unsupported key` 或 `is deprecated`。以上三项已固化为 Test 13 的断言，运行时用真实生成器（而非 stub）校验。
 - [x] 3.3 生成作业工作区目录、`README.txt`（含 systemd 与 podman 运维命令）、并创建 `deployments/podman/README.md` 的文件与单元布局章节。验证：安装后路径存在，文档命令与脚本实际使用的命令一致。
   - 验证结果：Test 1 断言工作区与 `README.txt` 存在、其中含 `--upgrade`；`deployments/podman/README.md` 的运维命令与脚本实现一致（`--status/--start/--stop/--restart/--upgrade/--uninstall`、`journalctl -u`、`podman logs/exec`、`podman-system-generator --dryrun`）。
 
@@ -31,6 +32,7 @@
 
 - [x] 4.1 实现缓存单元生成与网络创建：internal 模式创建 `<project>-net` 并给缓存容器 `NetworkAlias=cache-server`；host 模式发布 `<port>:3000`。验证：测试断言 internal 模式无 `PublishPort` 且 `ACTIONS_RESULTS_URL` 指向 `cache-server`；host 模式含端口且 URL 为宿主可解析地址。
   - 实现偏差：别名改用 `Network=<project>-net:alias=cache-server`，因为 Quadlet 的 `NetworkAlias=` 键自 Podman 5.2 才存在，而 `--network` 的 `alias=` 选项在 4.4 即可用（保住版本门槛）。验证结果：Test 1 断言 internal 模式无 `PublishPort`、含 `alias=cache-server`、`ACTIONS_RESULTS_URL=http://cache-server:3000/`；Test 4 断言 host 模式含 `PublishPort=<port>:3000` 且 URL 为给定宿主地址。
+  - DNS 实测（Podman 4.9.3）：默认 `podman` 网络的 `dns_enabled` 为 `false`，而 `podman network create` 创建的网络为 `true`（该版本只有 `--disable-dns` 开关，无 `--dns-enabled`），故"自建 `<project>-net`"即是别名可解析的充分条件；Quadlet 自愈用的 `ExecStartPre=-podman network create <net>` 走同一条创建路径，因此网络被误删后重建仍保有 DNS。设计文档第 5 条的判断由此得到实测支持。
 - [x] 4.2 实现 `GHR_CACHE=0`、`GHR_CACHE_URL`、`GHR_CACHE_PORT`、`GHR_CACHE_MODE` 覆盖语义。验证：禁用缓存时不生成缓存单元、不创建网络、不向 runner 注入 `ACTIONS_RESULTS_URL`。
   - 验证结果：Test 2 断言 `GHR_CACHE=0` 时无缓存单元、无 `ACTIONS_RESULTS_URL`；Test 4 覆盖 `GHR_CACHE_MODE=host`/`GHR_CACHE_PORT`/`GHR_CACHE_URL`（含 `GHR_CACHE_CLEANUP_DAYS` 派生）。
 - [x] 4.3 实现缓存健康与可达性检查：单元带 `HealthCmd`，启动后从 runner 容器内探测缓存地址，失败时提示切换到 host 模式或检查 DNS。验证：测试断言 `HealthCmd` 指令存在，并用 stub 触发不可达分支检查提示文本。
@@ -65,9 +67,10 @@
 - [x] 7.2 在根 `README.md` 的安装器章节与部署矩阵中加入 Podman 路径（含版本门槛、DooD 兼容面限制、缓存模式建议）。验证：文档中的链接与命令可追溯到实际脚本行为。
   - 验证结果：新增 "Podman + systemd (Quadlet) Installer" 章节（对照表 + 版本门槛 + 缓存模式 + DooD 限制 + socket 关闭方式）与矩阵新增列，并链接运维手册。
 - [x] 7.3 运行完整本地验证：`bash tests/install_test.sh`、`bash tests/podman_install_test.sh`、`shellcheck -x`（全部脚本）、`openspec validate podman-systemd-deployment --strict`。验证：全部通过且无回归。
-  - 验证结果：`tests/install_test.sh` 49 passed / 0 failed；`tests/podman_install_test.sh` 114 passed / 0 failed（Test 13 在无生成器主机上 SKIP）；`shellcheck -x install-podman.sh tests/podman_install_test.sh` 通过；`openspec validate podman-systemd-deployment --strict` 通过。
+  - 验证结果：`tests/install_test.sh` 49 passed / 0 failed；`tests/podman_install_test.sh` 在 macOS 上 116 passed / 0 failed（Test 13 因无生成器 SKIP），在 Ubuntu 24.04 + Podman 4.9.3 + systemd 255 容器内 129 passed / 0 failed；`shellcheck -x install-podman.sh tests/podman_install_test.sh` 通过；`openspec validate podman-systemd-deployment --strict` 通过。
+- [x] 7.4 修复测试套件的宿主耦合（由 CI 首次运行暴露）。`PATH=/usr/bin:/bin` 无法表达"没有 podman"——runner 镜像自带 `/usr/bin/podman` 4.9.3，导致该分支越过前置检查后在无关校验上失败；新增的生成器校验段落同样解析到真实 `podman`/`systemctl`，在没有 systemd PID 1 的宿主上必然失败。验证：改用"链接全部系统二进制、只排除指定名字"的私有 PATH 沙箱（并加一条 fixture 自断言，沙箱若再次解析到 podman 即报错），安装调用统一走 stub 路径；在 ubuntu:24.04 + Podman 4.9.3 上先复现出与 CI 完全一致的失败，修复后同环境 129 passed / 0 failed，CI 转绿。
 
 ## Workflow follow-up
 
-- 在具备 root 与 systemd 的 Podman 主机（Podman ≥ 4.4）上执行一次真实端到端安装：确认 `podman-system-generator` 解析、`systemctl` 托管、runner 注册成功与开机自启有效，并记录结果。
+- 在具备 root 与 systemd 的 Podman 主机（Podman ≥ 4.4）上执行一次真实端到端安装：确认 `podman-system-generator` 解析、`systemctl` 托管、runner 注册成功与开机自启有效，并记录结果。目前已完成的替代验证：容器内以真实 Podman 4.9.3 + systemd 255 执行生成器，确认单元被解析、`systemd-analyze verify` 接受、`.wants` 开机自启符号链接生成（见 3.2）；尚未覆盖的是真正由 systemd 托管的 `systemctl start`、journald 日志落盘、runner 注册成功与重启后自启。
 - 实现完成并通过评审后归档：`openspec archive podman-systemd-deployment`。

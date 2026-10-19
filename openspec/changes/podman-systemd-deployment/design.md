@@ -46,7 +46,7 @@ Quadlet 生成的单元对 systemd 而言是生成单元（transient），`syste
 
 ### 5. 缓存可达性：默认专用网络 + `cache-server` 别名，可选宿主机端口
 
-Podman 默认网络的 `dns_enabled` 为 `false`，容器名在默认网络上不可解析，因此 internal 模式必须使用自建网络：脚本创建 `<project>-net`（netavark 默认启用 DNS），缓存容器以 `Network=<project>-net:alias=cache-server` 加入，runner 通过 `http://cache-server:3000` 访问，不向宿主机发布端口。别名没有使用 Quadlet 的 `NetworkAlias=` 键，因为该键自 Podman 5.2 才存在，而 `--network` 的 `alias=` 选项在 4.4 已可用，用它才能保住既定的版本门槛。备选方案是 Quadlet `.network` 单元，但该单元类型需要 Podman ≥ 4.7，会把门槛抬高并排除更多发行版。为在网络被误删后自愈，两个角色的单元都带一条 `ExecStartPre=-podman network create ...`（失败可忽略，故用 `-` 前缀）；安装器还会检查 `podman info` 报告的网络后端，在非 netavark 后端上提示别名可能无法解析（CNI 需要 dnsname 插件）。
+Podman 默认网络的 `dns_enabled` 为 `false`，容器名在默认网络上不可解析，因此 internal 模式必须使用自建网络：脚本创建 `<project>-net`，缓存容器以 `Network=<project>-net:alias=cache-server` 加入，runner 通过 `http://cache-server:3000` 访问，不向宿主机发布端口。自建网络带 DNS 这一点已在 Podman 4.9.3 上实测：默认 `podman` 网络的 `dns_enabled` 为 `false`，`podman network create` 创建的网络为 `true`（该版本只有 `--disable-dns` 开关，没有反向的 `--dns-enabled`），因此无需额外开关，Quadlet 自愈用的 `ExecStartPre=-podman network create` 重建出的网络同样保有 DNS。别名没有使用 Quadlet 的 `NetworkAlias=` 键，因为该键自 Podman 5.2 才存在，而 `--network` 的 `alias=` 选项在 4.4 已可用，用它才能保住既定的版本门槛。备选方案是 Quadlet `.network` 单元，但该单元类型需要 Podman ≥ 4.7，会把门槛抬高并排除更多发行版。为在网络被误删后自愈，两个角色的单元都带一条 `ExecStartPre=-podman network create ...`（失败可忽略，故用 `-` 前缀）；安装器还会检查 `podman info` 报告的网络后端，在非 netavark 后端上提示别名可能无法解析（CNI 需要 dnsname 插件）。
 
 host 模式则发布 `<port>:3000` 并把宿主机可解析地址写入 `ACTIONS_RESULTS_URL`，用于工作流里使用 `container:` 的嵌套容器作业（嵌套容器不在 stack 网络上，无法解析 `cache-server`）。这与 `install.sh` 的 `host` 模式语义一致，风险与限制在同处说明。
 
