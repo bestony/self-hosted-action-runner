@@ -113,6 +113,18 @@ assert_path_missing() {
     fi
 }
 
+assert_is_symlink() {
+    local target="$1"
+    local msg="$2"
+    if [ -L "$target" ]; then
+        printf "  [PASS] %s\n" "$msg"
+        PASSED=$((PASSED + 1))
+    else
+        printf "  [FAIL] %s: %s is not a symlink\n" "$msg" "$target" >&2
+        FAILED=$((FAILED + 1))
+    fi
+}
+
 count_pattern() {
     local file="$1"
     local pattern="$2"
@@ -142,6 +154,33 @@ reset_stub_logs() {
     : > "${STUB_LOG}/podman.log"
     : > "${STUB_LOG}/systemctl.log"
     : > "${STUB_LOG}/journalctl.log"
+}
+
+# install-podman.sh probes for binaries on PATH, so simulating an absent binary
+# requires a PATH that cannot resolve it. Narrowing PATH is not enough: runner
+# images ship real tooling in /usr/bin (GitHub's ubuntu-24.04 image includes
+# Podman 4.9.3), so PATH=/usr/bin:/bin still finds a usable podman. This helper
+# links the system binaries into a private directory minus the exclusions, which
+# makes absence explicit and host-independent.
+make_bin_sandbox() {
+    local sandbox="$1"
+    local excluded=" $2 "
+    local src entry name
+    mkdir -p "$sandbox"
+    for src in /usr/local/bin /usr/bin /bin /usr/sbin /sbin /usr/local/sbin; do
+        [ -d "$src" ] || continue
+        for entry in "$src"/*; do
+            [ -e "$entry" ] || continue
+            name="${entry##*/}"
+            case "$excluded" in
+                *" $name "*) continue ;;
+            esac
+            if [ -e "$sandbox/$name" ] || [ -L "$sandbox/$name" ]; then
+                continue
+            fi
+            ln -s "$entry" "$sandbox/$name" 2>/dev/null || true
+        done
+    done
 }
 
 # ------------------------------------------------------------------------------
@@ -190,13 +229,19 @@ STUB
 chmod +x "${STUB_DIR}/podman" "${STUB_DIR}/systemctl" "${STUB_DIR}/journalctl"
 reset_stub_logs
 
-run_installer() {
+run_installer_with_quadlet_dir() {
+    local quadlet_dir="$1"
+    shift
     GHR_UNSAFE_SKIP_PLATFORM_CHECKS=1 \
-    GHR_QUADLET_DIR="${QUADLET_DIR}" \
+    GHR_QUADLET_DIR="${quadlet_dir}" \
     STUB_LOG="${STUB_LOG}" \
     STUB_JOURNAL_TEXT="${STUB_JOURNAL_TEXT:-Listening for Jobs}" \
     PATH="${STUB_DIR}:${PATH}" \
     bash "${INSTALL_SH}" "$@"
+}
+
+run_installer() {
+    run_installer_with_quadlet_dir "${QUADLET_DIR}" "$@"
 }
 
 printf "==================================================\n"
@@ -619,6 +664,62 @@ else
     assert_contains "${BASE_TMP}/quadlet-dryrun.out" "---${PROJECT12}-runner-1.service---" "Generator converts the runner unit into a service"
     assert_contains "${BASE_TMP}/quadlet-dryrun.out" "ExecStart=/usr/bin/podman run" "Generated service runs the container through podman"
     assert_contains "${BASE_TMP}/quadlet-dryrun.out" "WantedBy=multi-user.target" "Generated service keeps the boot startup target"
+    # Podman builds differ in whether a rejected key fails the run or is only
+    # reported, so assert the reporting as well: a silently dropped directive
+    # would otherwise leave the stack running with a setting missing.
+    assert_not_contains "${BASE_TMP}/quadlet-dryrun.out" "unsupported key" "Generator reports no unsupported keys"
+    assert_not_contains "${BASE_TMP}/quadlet-dryrun.out" "is deprecated" "Generator reports no deprecated keys"
+
+    # Boot startup cannot use `systemctl enable` for generated units: Quadlet has
+    # to materialise the <target>.wants symlinks itself, and only a real
+    # generator run proves that wiring exists. Cache is enabled here so both
+    # unit kinds are covered.
+    GEN_UNITS="${BASE_TMP}/generator-units"
+    GEN_OUT="${BASE_TMP}/generator-out"
+    rm -rf "$GEN_UNITS" "$GEN_OUT"
+    mkdir -p "$GEN_UNITS" "$GEN_OUT"
+
+    set +e
+    # Stubs drive the installer here: the real generator is exercised below, but
+    # the install itself must not depend on a booted systemd or a real Podman.
+    GHR_RUNNER_1_URL="https://github.com/my-org/generator-check" \
+    GHR_RUNNER_1_TOKEN="SECRET_GENERATOR_TOKEN_77777" \
+        run_installer_with_quadlet_dir "${GEN_UNITS}" --non-interactive --no-start \
+        --dir "${BASE_TMP}/generator-stack" > "${BASE_TMP}/test13-install.log" 2>&1
+    GEN_INSTALL_EC=$?
+    set -e
+    assert_success "$GEN_INSTALL_EC" "Cache-enabled stack for generator validation is generated"
+
+    GEN_UNIT_COUNT="$(find "${GEN_UNITS}" -maxdepth 1 -type f -name '*.container' | wc -l | tr -d ' ')"
+    assert_equals "2" "$GEN_UNIT_COUNT" "Generator check stack writes both runner and cache units"
+
+    GEN_RUNNER_UNIT="$(find "${GEN_UNITS}" -maxdepth 1 -type f -name '*-runner-1.container' -print -quit)"
+    GEN_CACHE_UNIT="$(find "${GEN_UNITS}" -maxdepth 1 -type f -name '*-cache.container' -print -quit)"
+    GEN_RUNNER_BASE="$(basename "${GEN_RUNNER_UNIT:-unit-not-found}" .container)"
+    GEN_CACHE_BASE="$(basename "${GEN_CACHE_UNIT:-unit-not-found}" .container)"
+
+    set +e
+    QUADLET_UNIT_DIRS="${GEN_UNITS}" "$GENERATOR" "$GEN_OUT" > "${BASE_TMP}/generator.out" 2>&1
+    GEN_RUN_EC=$?
+    set -e
+    assert_success "$GEN_RUN_EC" "Generator materialises units into the systemd generator directory"
+    assert_is_symlink "${GEN_OUT}/multi-user.target.wants/${GEN_RUNNER_BASE}.service" "Generator wires the runner unit into multi-user.target.wants"
+    assert_is_symlink "${GEN_OUT}/multi-user.target.wants/${GEN_CACHE_BASE}.service" "Generator wires the cache unit into multi-user.target.wants"
+    assert_is_symlink "${GEN_OUT}/default.target.wants/${GEN_RUNNER_BASE}.service" "Generator wires the runner unit into default.target.wants"
+
+    if command -v systemd-analyze >/dev/null 2>&1; then
+        set +e
+        systemd-analyze verify "${GEN_OUT}/${GEN_RUNNER_BASE}.service" "${GEN_OUT}/${GEN_CACHE_BASE}.service" \
+            > "${BASE_TMP}/systemd-analyze.out" 2>&1
+        VERIFY_EC=$?
+        set -e
+        assert_success "$VERIFY_EC" "systemd accepts the generated services (systemd-analyze verify)"
+        if [ "$VERIFY_EC" -ne 0 ] && [ -s "${BASE_TMP}/systemd-analyze.out" ]; then
+            sed 's/^/         /' "${BASE_TMP}/systemd-analyze.out" >&2
+        fi
+    else
+        printf "  [SKIP] systemd-analyze is not installed on this host\n"
+    fi
 fi
 
 # ------------------------------------------------------------------------------
@@ -680,16 +781,26 @@ assert_success "$TEST15A_EC" "Unchecked mode does not enforce the Podman version
 assert_contains "${BASE_TMP}/test15a.log" "Podman 4.3.1 is below the required 4.4" "Too-old Podman is reported even when checks are disabled"
 
 set +e
-# No podman binary on PATH at all: the installer must refuse with remediation.
+# No podman binary reachable at all: the installer must refuse with remediation.
+NOPODMAN_BIN="${BASE_TMP}/t15-bin-without-podman"
+make_bin_sandbox "$NOPODMAN_BIN" podman
+if PATH="${NOPODMAN_BIN}" command -v podman >/dev/null 2>&1; then
+    SANDBOX_EXCLUDES_PODMAN=false
+else
+    SANDBOX_EXCLUDES_PODMAN=true
+fi
+assert_equals "true" "$SANDBOX_EXCLUDES_PODMAN" "Fixture: the sandbox PATH cannot resolve podman"
+
 GHR_UNSAFE_SKIP_PLATFORM_CHECKS=1 \
 GHR_QUADLET_DIR="${QUADLET_DIR}" \
-PATH="/usr/bin:/bin" \
+PATH="${NOPODMAN_BIN}" \
     bash "${INSTALL_SH}" --non-interactive --no-start --skip-podman-install \
     --dir "${BASE_TMP}/t15-missing" > "${BASE_TMP}/test15b.log" 2>&1
 TEST15B_EC=$?
 set -e
 assert_failure "$TEST15B_EC" "Missing Podman with --skip-podman-install fails the install"
 assert_contains "${BASE_TMP}/test15b.log" "--skip-podman-install was specified" "The failure names the flag that blocked installation"
+assert_path_missing "${BASE_TMP}/t15-missing/.env" "Missing Podman fails before any configuration is written"
 
 printf "\n==================================================\n"
 printf "Test Summary: %d passed, %d failed\n" "$PASSED" "$FAILED"
