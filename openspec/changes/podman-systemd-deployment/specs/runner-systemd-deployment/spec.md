@@ -97,9 +97,14 @@
 - **WHEN** 用户按脚本输出的提示查看日志
 - **THEN** 容器输出既可通过 `journalctl -u <unit>` 读取，也可通过 podman 日志命令读取
 
+#### Scenario: 快速失败后持续重试
+
+- **WHEN** 生成的单元因注册失败等原因在数秒内退出
+- **THEN** 该单元携带 `StartLimitIntervalSec=0` 与 `RestartSec=10`，systemd 不会在 5 次快速失败后把单元停在 `failed` 状态，而是按 10 秒间隔持续重试
+
 ### Requirement: 安装后状态验证
 
-安装器 SHALL 在启动 stack 后等待并判定每个 runner 的注册结果，并对失败实例采取停止动作。
+安装器 SHALL 在启动 stack 后等待并判定每个 runner 的注册结果，并对失败实例采取停止动作。判定 SHALL 只依据能证明 runner 在线的证据，不得把「凭据存在」当作成功。
 
 #### Scenario: 注册成功
 
@@ -108,8 +113,28 @@
 
 #### Scenario: 注册凭据无效
 
-- **WHEN** runner 容器日志在等待窗口内出现 `Http response code: 404` 或 `Http response code: 401`
+- **WHEN** runner 容器日志在等待窗口内出现 `Http response code: 404` 或 `Http response code: 401`，且同一行指向 `runner-registration` 端点
 - **THEN** 脚本把该实例标记为失败、停止对应 systemd 单元以避免重启风暴，打印排查与修复命令，并在结束时以退出码 1 报告失败实例数
+
+#### Scenario: 复用凭据但 runner 未上线
+
+- **WHEN** runner 容器日志说明已有注册凭据（`.runner present`），但等待窗口内始终没有出现 `Listening for Jobs`
+- **THEN** 脚本以警告标记该实例并说明 runner 未上线，绝不把「凭据存在」报告为注册成功
+
+#### Scenario: 首次启动的日志不得误判为复用
+
+- **WHEN** runner 容器日志出现首次注册文案 `No existing runner configuration detected`
+- **THEN** 脚本不得将其判定为已有凭据或注册成功
+
+#### Scenario: 新失败覆盖旧成功
+
+- **WHEN** 同一单元日志里既出现过 `Listening for Jobs`（较早的容器实例），又出现晚于它的注册失败行
+- **THEN** 脚本以最新一条有效状态为准，并把该实例判定为失败
+
+#### Scenario: 容器无法出网
+
+- **WHEN** 容器无法解析或无法访问 `https://api.github.com`
+- **THEN** 脚本在启动 stack 前中止安装，区分 DNS 失败与转发被丢弃两种成因，给出对应宿主机修复命令（含从网络自动获取的网桥名），并说明 `GHR_SKIP_EGRESS_CHECK=yes` 可跳过该预检
 
 #### Scenario: 等待窗口内未得出结论
 

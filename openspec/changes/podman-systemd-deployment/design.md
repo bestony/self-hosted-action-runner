@@ -83,13 +83,16 @@ mount 一个 unix socket 无法通过 `:z`/`:Z` 重标记，在 SELinux enforcin
 ## Risks / Trade-offs
 
 - [Podman < 4.4（Debian 12 为 4.3、Ubuntu 22.04 为 3.4）导致 Quadlet 不可用] → 安装前检查版本与生成器文件，失败时给出发行版对应的升级路径（backports 或上游仓库）并退出，不做"降级到 `podman generate systemd`"的隐式回退。
-- [专用网络被 `podman network prune` 删除导致单元启动失败] → 单元自带 `ExecStartPre=-podman network create` 自愈，安装器在启动前也会创建网络。
+- [专用网络被 `podman network prune` 删除导致单元启动失败] → 单元自带 `ExecStartPre=-podman network create` 自愈，安装器在启动前也会创建网络。副作用：网络已存在时每次启动都会打印一行 `Error: network name <net> already used: network already exists`，由 `-` 前缀忽略，属预期噪声，已写入运维手册避免误判。
+- [宿主机防火墙丢弃容器转发的流量] → 首次真实部署在同时装有 ufw、Docker 与 Tailscale 的 Debian 13 主机上复现：Podman 5.4.2 的 netavark 把放行规则写入 nftables（`table inet netavark` 的 `FORWARD` 链，`priority filter`），而 ufw 的 `DEFAULT_FORWARD_POLICY=DROP` 位于 iptables 的 `FORWARD` 链（同一 hook 同一优先级）；iptables 先执行，容器子网（`10.89.0.0/24`）的包被全部丢弃，DNS 仍可解析（由宿主回答）而 TCP 静默挂死。表现为 runner 连续重启、每次注册请求挂满 100 秒后超时，安装器却因日志子串误判报告"注册成功"。处理：安装器启动前用探针容器验证 DNS 与 `https://api.github.com` 可达（区分两类成因并给出 `ufw route allow in/out on <bridge>` 命令），运维手册新增宿主机前置条件章节；`GHR_SKIP_EGRESS_CHECK=yes` 为显式逃生口。
+- [systemd 的启动速率限制把快速失败的单元停在 `failed`] → Docker 的 `restart: always` 永不放弃，而 systemd 默认"10 秒内 5 次启动"即停止并按 `Restart=always` 的默认 `RestartSec=100ms` 形成热循环。真实主机（systemd 257）实测：默认配置 11 秒后 `NRestarts=5` 且 `failed`；加 `StartLimitIntervalSec=0` 后 11 秒内 `NRestarts=9` 且仍在 `running`。因此生成的单元固定带 `StartLimitIntervalSec=0`（`[Unit]`）与 `RestartSec=10`（`[Service]`），并在 Podman 4.9.3 与 5.4.2 的生成器上确认两键被接受且出现在生成结果中（更早的 Quadlet 若不支持会在安装时被 `verify_generated_units` 拦下，不会静默降级）。
 - [socket 挂载导致工作流拥有宿主机 root 等价能力] → 文档明示风险与 `GHR_PODMAN_SOCKET=` 关闭方式；默认沿用 Docker DooD 的信任边界，不新增授权。
 - [SELinux enforcing 主机上标签行为差异] → 默认 `SecurityLabelDisable=true`，并在文档中说明 `GHR_SELINUX=1` 的适用条件。
 - [`ExecStartPre` 里的 `podman network create` 与 systemd 单元同时启动时的竞态] → 创建冲突由 `-` 前缀忽略，先成功者创建网络，随后容器启动。
 - [Podman API 兼容面（v1.40）与工作流预期不符] → 在 README、运维手册与 `--help` 中明示支持的子集与推荐的 `podman` CLI 用法。
 - [安装目录中的 `.env` 与 `/etc/containers/systemd/` 单元漂移] → 单元文件头部写入生成来源与重新生成命令；重复执行安装器即重新生成两者。
 - [host 模式把缓存端口暴露到宿主网络] → 与 `install.sh` 行为一致，安装输出中提示仅在内网或配合防火墙使用。
+- [注册判定依赖日志解析] → 判定只依据"能证明 runner 在线"的证据（`Listening for Jobs`），失败标志锚定到 `runner-registration` 端点以避免把运行期其他端点的 404 误报为安装失败；同一日志窗口内以最新一条有效状态为准，昨日的成功不会覆盖今日的失败。代价是"凭据存在但从未上线"只能给警告而非硬失败（可能只是日志尚未落盘），此时脚本明确说明未观察到上线。
 
 ## Migration Plan
 

@@ -70,7 +70,20 @@
   - 验证结果：`tests/install_test.sh` 49 passed / 0 failed；`tests/podman_install_test.sh` 在 macOS 上 116 passed / 0 failed（Test 13 因无生成器 SKIP），在 Ubuntu 24.04 + Podman 4.9.3 + systemd 255 容器内 129 passed / 0 failed；`shellcheck -x install-podman.sh tests/podman_install_test.sh` 通过；`openspec validate podman-systemd-deployment --strict` 通过。
 - [x] 7.4 修复测试套件的宿主耦合（由 CI 首次运行暴露）。`PATH=/usr/bin:/bin` 无法表达"没有 podman"——runner 镜像自带 `/usr/bin/podman` 4.9.3，导致该分支越过前置检查后在无关校验上失败；新增的生成器校验段落同样解析到真实 `podman`/`systemctl`，在没有 systemd PID 1 的宿主上必然失败。验证：改用"链接全部系统二进制、只排除指定名字"的私有 PATH 沙箱（并加一条 fixture 自断言，沙箱若再次解析到 podman 即报错），安装调用统一走 stub 路径；在 ubuntu:24.04 + Podman 4.9.3 上先复现出与 CI 完全一致的失败，修复后同环境 129 passed / 0 failed，CI 转绿。
 
+## 8. 真实主机部署暴露的问题与修复
+
+- [x] 8.1 修正注册判定：`Existing runner configuration detected` 的子串匹配会命中首次注册文案 `No existing runner configuration detected (.runner missing)`，把正在 404 崩溃循环的 runner 报告为"凭据已复用、注册 OK"。改为只匹配正向完整句，按"同一日志窗口内最新一条有效状态"判定，新增 `REUSED_PENDING`（凭据在但未上线）与 `FAIL_EGRESS`/`FAIL_START_LIMIT` 终止态，成功仅认 `Listening for Jobs`。验证：Test 16 覆盖四个用例（首次启动文案不得成功、复用且上线=成功、仅有凭据=警告且不算成功、新失败覆盖旧成功）；Test 3 的 fixture 换成真实日志行（含 `runner-registration` 端点）并保持 404 判定生效。
+- [x] 8.2 新增宿主机出网预检 `verify_container_egress`：用已拉取的 runner 镜像在 stack 网络上探测 `getent hosts api.github.com` 与 `https://api.github.com`（`--entrypoint /bin/sh` 覆盖镜像入口，避免探针容器真的去注册），区分"DNS 解析失败"与"转发被丢弃"，并从 `podman network inspect --format {{.NetworkInterface}}` 自动取网桥名给出可复制的 `ufw route allow` 修复命令；命中明确失败时以退出码 1 中止安装，`GHR_SKIP_EGRESS_CHECK=yes` 为显式逃生口。验证：Test 17 五个用例（成功、转发失败且带网桥名、无网桥名时的通用提示、DNS 失败、跳过检查时零探针且提示显式）。
+- [x] 8.3 修正单元重试语义：生成单元固定带 `StartLimitIntervalSec=0`（`[Unit]`）与 `RestartSec=10`（`[Service]`），避免快速失败被 systemd 停在 `failed`、或按默认 `RestartSec=100ms` 热循环。在真实主机（systemd 257，Debian 13）实测：默认配置 11 秒后 `NRestarts=5`、`SubState=failed`；仅加 `StartLimitIntervalSec=0` 后 11 秒 `NRestarts=9`、仍在 `running`。兼容性在 Podman 4.9.3 与 5.4.2 的真实生成器上确认：两键被接受、exit 0，且写入生成结果（不支持更早 Quadlet 时会被 `verify_generated_units` 拦下）。验证：Test 1 断言两键存在、`StartLimitIntervalSec` 位于 `[Unit]` 分组。
+- [x] 8.4 精确化缓存可达性探测：区分"别名无法解析"（提示 netavark/dnsname 与后端查询）、"解析成功但缓存未应答"（指向缓存单元）与"探针跑不起来"（容器仍在重启），不再统一归因于 DNS。验证：Test 1/4/10 的 stub 路径不回归；失败分支文本随 8.5 文档一并交付。
+- [x] 8.5 运维文档：`deployments/podman/README.md` 新增 "Container egress and host firewalls" 章节（含 ufw 与 nftables 优先级冲突的原理、`ufw route allow` 命令、手动复检命令、`GHR_SKIP_EGRESS_CHECK` 说明）与故障排查行（网络已存在噪声、出网挂死、404 token 作用域/有效期、`Start request repeated too quickly`、凭据在但未上线、缓存探测三种成因）。
+- [x] 8.6 修正操作提示：`curl ... | sudo bash` 场景下 `$0` 为 `bash`、`BASH_SOURCE[0]` 为空，结尾提示曾渲染成 `sudo bash bash --dir ...`。新增 `installer_command`（有脚本文件时输出绝对路径，管道安装时输出 `curl ... | sudo bash -s --`），统一替换 `.env`/单元头/`README.txt`/状态表/失败结语中的 14 处提示。验证：Test 1 断言 `README.txt` 含 `--upgrade` 提示且整体测试保持通过。
+- [x] 8.7 回归验证：`shellcheck -x`（全脚本）通过；`tests/podman_install_test.sh` 在 macOS 上 144 passed / 0 failed（Test 13 SKIP），在 ubuntu:24.04 + Podman 4.9.3 + systemd 容器内 157 passed / 0 failed；`tests/install_test.sh` 49 passed / 0 failed；`openspec validate podman-systemd-deployment --strict` 通过。
+
 ## Workflow follow-up
 
-- 在具备 root 与 systemd 的 Podman 主机（Podman ≥ 4.4）上执行一次真实端到端安装：确认 `podman-system-generator` 解析、`systemctl` 托管、runner 注册成功与开机自启有效，并记录结果。目前已完成的替代验证：容器内以真实 Podman 4.9.3 + systemd 255 执行生成器，确认单元被解析、`systemd-analyze verify` 接受、`.wants` 开机自启符号链接生成（见 3.2）；尚未覆盖的是真正由 systemd 托管的 `systemctl start`、journald 日志落盘、runner 注册成功与重启后自启。
+- 在具备 root 与 systemd 的 Podman 主机（Podman ≥ 4.4）上执行一次真实端到端安装：确认 `podman-system-generator` 解析、`systemctl` 托管、runner 注册成功与开机自启有效，并记录结果。
+  - 已完成的替代验证：容器内以真实 Podman 4.9.3 + systemd 255 执行生成器，确认单元被解析、`systemd-analyze verify` 接受、`.wants` 开机自启符号链接生成（见 3.2）。
+  - 首次真实主机部署（Debian 13 + Podman 5.4.2 + systemd 257）已确认：生成器产出单元并被 systemd 托管（`NRestarts` 随容器退出增长）、容器日志经 journald 落盘、镜像拉取与网络创建成功、`StartLimitIntervalSec=0` 的重试语义符合预期（见 8.3）、ufw 转发修复后容器出网恢复正常（见 8.2/8.5）。
+  - 仍未覆盖：以有效注册 token 完成一次真实注册、跑通一个真实 job、以及重启主机后确认自启。阻塞原因是现场使用的注册 token 已失效（404），需要重新签发组织级 token。
 - 实现完成并通过评审后归档：`openspec archive podman-systemd-deployment`。

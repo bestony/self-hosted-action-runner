@@ -13,7 +13,8 @@
 - 缓存服务集成：`internal` 模式（默认）为整套 stack 创建启用 DNS 的 Podman 网络，runner 通过 `cache-server` 别名访问缓存；`host` 模式将缓存端口发布到宿主机，供 `container:` 形式的嵌套容器作业访问。
 - 运行环境对接：默认挂载 `/run/podman/podman.sock` 到容器的 `/var/run/docker.sock`（Docker 兼容面）与 `/run/podman/podman.sock`（Podman 远程 CLI），并在单元中声明对 `podman.socket` 的依赖。
 - 配置记录：`${INSTALL_DIR}/.env`（权限 600）为唯一权威配置；每个服务的 env 文件由 `.env` 派生（权限 600），单元文件中不内联 token；重复执行安装器可追加 runner（`GHR_MODE=add`）或整体重配。
-- 安装后验证：等待 systemd 单元进入 active，按注册日志判定 runner 注册结果（Listening for Jobs / 401 / 404），失败实例停止以避免重启风暴，并输出含 systemd 与 podman 管理命令的最终状态表。
+- 安装后验证：等待 systemd 单元进入 active，启动前用探针容器验证容器出网（DNS 与 `https://api.github.com`），按注册日志判定 runner 注册结果（`Listening for Jobs` 才算成功，并识别 401/404/会话失败/出网失败/启动限流），失败实例停止以避免重启风暴，并输出含 systemd 与 podman 管理命令的最终状态表。
+- 宿主机前置条件：容器出网依赖宿主机转发；安装器在启动前显式检查并给出修复命令（ufw `DEFAULT_FORWARD_POLICY=DROP` 与 netavark 的 nftables 规则冲突会静默丢弃容器流量，表现为注册请求挂满 100 秒后超时与重启循环）。
 - 测试与 CI：新增 `tests/podman_install_test.sh`（在无真实 Podman 的环境中验证文件生成、权限、单元内容、缓存模式语义、生命周期指令映射、注册判定与卸载行为），将 `install-podman.sh` 与新测试纳入 lint 工作流的 ShellCheck 列表，并新增执行该测试套件的步骤。
 - 文档：README 新增 Podman 章节，新增 `deployments/podman/README.md` 运维手册。
 
@@ -32,6 +33,7 @@
 - 新增文件：`install-podman.sh`、`tests/podman_install_test.sh`、`deployments/podman/README.md`。
 - 修改文件：`README.md`（Podman 章节）、`.github/workflows/lint.yml`（ShellCheck 与测试）。
 - 目标主机影响：需要 systemd（PID 1）与 Podman ≥ 4.4；安装会写入 `/etc/containers/systemd/`、启用 `podman.socket`、创建 Podman 网络与命名卷，并在 `${INSTALL_DIR}/work/` 下创建作业工作区。
+- 宿主机防火墙影响：若宿主机丢弃容器转发（ufw 默认 `DEFAULT_FORWARD_POLICY=DROP` 与 Podman 5.x 的 netavark nftables 规则冲突），需要额外放行容器网桥（`ufw route allow in/out on <bridge>`）；安装器在启动前检测并给出命令，不修改宿主机防火墙。
 - 运行时依赖：镜像不变（`ghcr.io/bestony/self-hosted-action-runner`），无新增语言级依赖；仅依赖 Podman、systemd 与基础工具（`curl`、`grep`、`awk`）。
 - 安全影响：Podman API socket 挂载使工作流具备宿主机 root 等价能力（与 Docker DooD 路径同级）；默认 `SecurityLabelDisable=true` 以允许 socket 与工作区 bind mount，可用 `GHR_SELINUX=1` 退回带标签模式。
 - 已知限制（在文档中明示）：Podman API 仅提供 Docker API v1.40 兼容层，`docker compose` 风格的嵌套容器编排不受支持，工作流内应使用 `podman`（或对镜像操作可用的 `docker` 子集）；`container:` 作业需要 `host` 模式的缓存地址。
