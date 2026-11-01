@@ -11,6 +11,21 @@ Un runner autohospedado de GitHub Actions contenedorizado y multiarquitectura (a
 
 ---
 
+## ¿Por qué elegir este proyecto? (Comparativa)
+
+| Dimensión | Runner alojado en GitHub | Runner autohospedado nativo | Este proyecto |
+|---|---|---|---|
+| **Coste y minutos de uso** | Facturación por minuto en repos privados (desde $0.008/min). | Ejecución gratuita en su propio hardware. | **Sin costes adicionales por minuto**; aprovecha servidores propios o cloud al máximo. |
+| **Hardware y arquitectura** | Configuraciones fijas (habitualmente 2 vCPUs). Los runners ARM o de alto rendimiento son caros. | Depende del host, pero la configuración inicial es manual. | **Control total sobre CPU/RAM**. Soporte nativo multiarquitectura (`amd64`, `arm64` / Apple Silicon / Raspberry Pi). |
+| **Despliegue y ciclo de vida** | Cero mantenimiento (gestionado íntegramente por GitHub). | Manual y complejo: descarga de tarball, creación de usuario, servicio systemd y actualizaciones manuales. | **Instalador de una sola línea** (`curl \| bash`). Detección automática de Docker o Podman (Quadlet) y gestión de servicios. |
+| **Caché de Actions (`actions/cache`)** | Límite de 10 GB por repositorio; transferencia lenta por internet público. | Sin servidor de caché local integrado (requiere S3/MinIO complejo o falla). | **Servidor de caché compartido integrado** con parche binario y compresión ultrarrápida `zstd`. Almacenamiento en disco local sin límites de cuota. |
+| **Limpieza y aislamiento del host** | VM limpia y efímera para cada trabajo. | Se ejecuta directamente en el SO del host, acumulando paquetes residuales y artefactos. | **Aislamiento en contenedores**. Flujos de trabajo mediante Docker-outside-of-Docker (DooD) sin ensuciar el sistema anfitrión. |
+| **Permisos de archivos** | Gestionados transparentemente por GitHub. | Tareas de Docker crean archivos con permisos root en el host, provocando errores `EACCES: permission denied`. | **Corrección automática de permisos**. Hooks integrados devuelven automáticamente los archivos root al usuario `runner`. |
+| **Escalabilidad y multirrepositorio** | Concurrencia automática sujeta a la cuota de la cuenta. | Mantenimiento manual tedioso para cada instancia en directorios separados. | **Configuración multirunner y multirrepositorio en un solo paso**. Escalado sencillo mediante perfiles de Compose o Podman. |
+| **Compatibilidad con Marketplace** | 100% compatible. | Fallos frecuentes por ausencia de `/opt/hostedtoolcache` o herramientas base de compilación. | **Contrato de compatibilidad total**. Toolcache preconfigurado, herramientas esenciales, sudo sin contraseña y diagnóstico `runner-doctor`. |
+
+---
+
 ## Instalador interactivo de una sola línea
 
 La forma más sencilla de desplegar runners para repositorios individuales o múltiples con un servidor de caché compartido opcional:

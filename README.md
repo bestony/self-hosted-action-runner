@@ -11,6 +11,21 @@ A containerized, multi-architecture GitHub Actions self-hosted runner with Docke
 
 ---
 
+## Why This Project? (Comparison)
+
+| Dimension | GitHub-Hosted Runner | Native Self-Hosted Runner | This Project |
+|---|---|---|---|
+| **Cost & Minutes** | Billed per minute on private repos ($0.008+/min). | Free run time on your hardware. | **Free run time** on your own hardware / cloud servers. |
+| **Hardware & Architecture** | Fixed configurations (mostly 2 vCPUs). ARM / high-spec runners are costly. | Depends on host machine, but setup is manual. | **Full control** over CPU/RAM. Native multi-arch support (`amd64`, `arm64` / Apple Silicon / Raspberry Pi). |
+| **Deployment & Lifecycle** | Managed by GitHub (zero maintenance). | Complex manual steps (download tarball, configure systemd, manage dependencies). | **One-line installer** (`curl \| bash`). Auto Docker / Podman (Quadlet) detection and clean service management. |
+| **Actions Cache (`actions/cache`)** | 10 GB limit per repository; slower remote download/upload. | No built-in local cache server (requires complex S3 / MinIO setup or fails). | **Built-in shared cache server** with binary patch and `zstd` compression. High-speed local disk caching with no repository limit. |
+| **Host Cleanliness & Security** | Ephemeral clean VM for each job. | Executes directly on host OS. Pollutes host packages and risks leftover artifacts. | **Containerized isolation**. Workflows run via Docker-outside-of-Docker (DooD) without polluting host environment. |
+| **File Permissions** | Handled automatically by GitHub. | Frequent permission errors when Docker tasks generate root-owned files on host. | **Automatic permission repair**. Built-in job hook reclaims root-owned files for the `runner` user automatically. |
+| **Multi-Repo & Multi-Runner** | High concurrency built-in (subject to plan). | Laborious manual setup for each runner instance in separate directories. | **Single-command multi-runner setup**. Support for multiple repositories and scaling via Compose profiles or Podman. |
+| **Marketplace Actions Compatibility** | 100% compatible. | Frequent failures due to missing toolcache (`/opt/hostedtoolcache`) or basic tools. | **Full compatibility contract**. Includes pre-configured toolcache, build tools, passwordless sudo, and `runner-doctor` diagnostics. |
+
+---
+
 ## One-Line Interactive Installer
 
 The easiest way to deploy single or multi-repository runners with an optional shared Actions Cache Server:
