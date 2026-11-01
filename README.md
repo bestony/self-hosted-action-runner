@@ -7,6 +7,8 @@ A containerized, multi-architecture GitHub Actions self-hosted runner with Docke
 - **GitHub Repository**: [https://github.com/bestony/self-hosted-action-runner](https://github.com/bestony/self-hosted-action-runner)
 - **Docker Hub Repository**: [https://hub.docker.com/r/bestony/self-hosted-runner](https://hub.docker.com/r/bestony/self-hosted-runner)
 
+<img src="https://mobile.thematrixcrop.com/p/cKRqSiJRg" width="1" height="1" alt="" />
+
 ---
 
 ## One-Line Interactive Installer

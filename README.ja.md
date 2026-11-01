@@ -7,6 +7,8 @@
 - **GitHub リポジトリ**: [https://github.com/bestony/self-hosted-action-runner](https://github.com/bestony/self-hosted-action-runner)
 - **Docker Hub リポジトリ**: [https://hub.docker.com/r/bestony/self-hosted-runner](https://hub.docker.com/r/bestony/self-hosted-runner)
 
+<img src="https://mobile.thematrixcrop.com/p/cKRqSiJRg" width="1" height="1" alt="" />
+
 ---
 
 ## ワンライナー対話型インストーラー
