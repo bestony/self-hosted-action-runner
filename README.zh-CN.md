@@ -6,8 +6,19 @@
 
 - **GitHub 仓库**: [https://github.com/bestony/self-hosted-action-runner](https://github.com/bestony/self-hosted-action-runner)
 - **Docker Hub 镜像**: [https://hub.docker.com/r/bestony/self-hosted-runner](https://hub.docker.com/r/bestony/self-hosted-runner)
+- **视频教程**: [YouTube 完整实操教程](https://youtu.be/Rebc6bQKlsk)
 
 <img src="https://mobile.thematrixcrop.com/p/cKRqSiJRg" width="1" height="1" alt="" />
+
+---
+
+## 视频教程
+
+如果你更倾向于通过视频直观了解与快速上手，欢迎观看 YouTube 完整实操演示：
+
+[![GitHub Actions 免费额度总不够用？教你用 Docker 自建 Runner！一行脚本搞定多仓库并发与缓存加速](https://img.youtube.com/vi/Rebc6bQKlsk/maxresdefault.jpg)](https://youtu.be/Rebc6bQKlsk)
+
+> 📺 **YouTube 视频链接**：[GitHub Actions 免费额度总不够用？教你用 Docker 自建 Runner！一行脚本搞定多仓库并发与缓存加速](https://youtu.be/Rebc6bQKlsk)
 
 ---
 
