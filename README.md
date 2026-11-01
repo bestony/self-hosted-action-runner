@@ -26,7 +26,7 @@ A containerized, multi-architecture GitHub Actions self-hosted runner with Docke
 
 ---
 
-## One-Line Interactive Installer
+## 1. One-Line Interactive Installer
 
 The easiest way to deploy single or multi-repository runners with an optional shared Actions Cache Server:
 
@@ -34,151 +34,29 @@ The easiest way to deploy single or multi-repository runners with an optional sh
 curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install.sh | bash
 ```
 
-### What It Does
-- **Preflight & Dependencies**: Checks for Docker Engine, Docker Compose v2, and reachable daemon. Offers automated installation on Linux (via `get.docker.com`) and Homebrew setup on macOS.
-- **Interactive Configuration**: Prompts for repository/organization URLs, hidden registration tokens, runner prefixes, and labels. Supports configuring multiple runners in one deployment.
-- **Shared Cache Server**: Optionally deploys and configures `ghcr.io/falcondev-oss/github-actions-cache-server:latest` with automatic DooD host IP detection.
-- **Deterministic Compose & Security**: Generates `docker-compose.yml` and `.env` with strict `chmod 600` permissions. Tokens are never inlined into Compose files.
-- **Automatic Health & Log Verification**: Starts the stack and tails registration logs to verify runner connectivity with GitHub.
+### Highlights
+- **Preflight & Automatic Setup**: Detects Docker Engine and Compose v2; installs dependencies automatically on Linux and macOS.
+- **Interactive Configuration**: Prompts for repository/organization URLs, hidden registration tokens, runner names, and labels. Supports configuring multiple runners in one pass.
+- **Shared Cache Server**: Deploys an integrated cache server (`falcondev-oss/github-actions-cache-server`) with automatic DooD host IP resolution.
+- **Safe & Deterministic**: Creates `docker-compose.yml` and `.env` with strict `chmod 600` permissions. Registration tokens are never written into Compose files.
 
-### Installer CLI Flags
-- `--dir <path>`: Target directory (default: `/opt/github-runner` for root, `$HOME/github-runner` for non-root).
+### Key Flags
+- `--dir <path>`: Target installation directory (default: `/opt/github-runner` or `$HOME/github-runner`).
 - `--non-interactive`: Automate deployment without interactive prompts using `GHR_*` environment variables.
-- `--no-start`: Generate configuration files and directory structure without starting containers.
-- `--skip-docker-install`: Skip automatic Docker and Compose plugin installation attempts.
+- `--no-start`: Generate configuration files without starting containers.
 - `--uninstall`: Stop containers and prompt to delete persistent volumes.
-- `--debug`: Enable verbose debug logging.
-- `-h, --help`: Show help text and options.
 
-### Interactive Example (Default)
-
-Run the command without any `GHR_*` variables or flags. The installer reads your answers from the terminal (`/dev/tty`), so this works through `curl | bash`. Press Enter to accept a default value. The token input is hidden.
-
-```text
-$ curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install.sh | bash
-
-==> [3/6] Collecting configuration
-Enter installation directory [default: /home/me/github-runner]:
-
---- Configuring Runner #1 ---
-GitHub Repository or Organization URL (e.g. https://github.com/org/repo): https://github.com/my-org/repo-a
-GitHub Runner Registration Token:
-Runner name prefix [default: repo-a-]:
-Runner labels (comma-separated) [default: self-hosted,linux,docker]:
-Number of runner instances for this target (to run jobs concurrently) [default: 1]: 2
-Add another repository/org runner? [y/N]: y
-
---- Configuring Runner #2 ---
-GitHub Repository or Organization URL (e.g. https://github.com/org/repo): https://github.com/my-org
-GitHub Runner Registration Token:
-Runner name prefix [default: my-org-]:
-Runner labels (comma-separated) [default: self-hosted,linux,docker]:
-Number of runner instances for this target (to run jobs concurrently) [default: 1]: 1
-Add another repository/org runner? [y/N]:
-
---- Cache Server Configuration ---
-Enable shared GitHub Actions cache server? [Y/n]:
-Select cache URL mode: [1] Internal (http://cache-server:3000) or [2] Host IP (reachable by container jobs) [default: 1]:
-Runner container image [default: ghcr.io/bestony/self-hosted-action-runner:latest]:
-
-(configuration summary, tokens masked)
-Write configuration and continue? [Y/n]:
-```
-
-Get a registration token from **Settings > Actions > Runners > New self-hosted runner** of the repository or organization. The token expires after 1 hour, but the runner needs it only for the first registration.
-
-If you run the installer again with the same directory, it shows the configured runners and asks you to choose `[A]dd runners`, `[R]econfigure from scratch` or `[Q]uit`.
-
-### Non-Interactive Example (CI / Automation)
-
-Use `--non-interactive` only when no person is at the terminal. In this mode the installer reads the `GHR_*` variables and does not ask questions. Without `--non-interactive`, the installer asks for all values and ignores the `GHR_*` variables (only `GHR_DEBUG=1` applies in both modes).
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install.sh | \
-  GHR_RUNNER_1_URL="https://github.com/my-org/repo-a" \
-  GHR_RUNNER_1_TOKEN="YOUR_REPO_A_TOKEN" \
-  GHR_RUNNER_1_INSTANCES=2 \
-  GHR_RUNNER_2_URL="https://github.com/my-org/repo-b" \
-  GHR_RUNNER_2_TOKEN="YOUR_REPO_B_TOKEN" \
-  GHR_CACHE=1 \
-  bash -s -- --non-interactive --dir /opt/github-runner
-```
+> For Linux hosts using Podman instead of Docker, use our Podman Quadlet installer:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install-podman.sh | sudo bash
+> ```
+> See [deployments/podman/README.md](deployments/podman/README.md) for complete details.
 
 ---
 
-## Podman + systemd (Quadlet) Installer
+## 2. Docker Quick Start (Manual Single Container)
 
-Linux hosts that run Podman instead of Docker Engine use `install-podman.sh`. It
-generates [Quadlet](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)
-unit files, so **systemd** starts the stack on boot and owns its lifecycle:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install-podman.sh | sudo bash
-```
-
-It shares the interactive prompts, the `GHR_*` variables and the `.env` contract
-with `install.sh`; only the unit format and the lifecycle owner differ:
-
-| | `install.sh` (Docker) | `install-podman.sh` (Podman) |
-|---|---|---|
-| Unit of deployment | `docker-compose.yml` + `.env` | Quadlet `.container` files + `.env` |
-| Lifecycle owner | `docker compose` | systemd (`systemctl`, `journalctl`) |
-| Boot startup | `restart:` policy of the containers | `[Install] WantedBy=multi-user.target default.target` inside each unit |
-| Requirements | Docker Engine + Compose v2 | Linux with systemd as PID 1, rootful Podman >= 4.4 |
-| Per-target instances | `--instances`, `GHR_RUNNER_<n>_INSTANCES` | same |
-| Subcommands | `--uninstall` | `--status`, `--start`, `--stop`, `--restart`, `--upgrade`, `--uninstall` |
-
-```bash
-# non-interactive deployment next to the Docker path
-curl -fsSL https://raw.githubusercontent.com/bestony/self-hosted-action-runner/main/install-podman.sh | \
-  sudo bash -s -- --non-interactive --dir /opt/github-runner --skip-podman-install
-```
-
-### Podman Path Specifics
-- **Version floor**: Quadlet ships with Podman 4.4. The installer installs Podman
-  through the distribution package manager when it is missing, verifies the
-  version, verifies that `podman-system-generator` exists and fails with
-  remediation steps on older builds.
-- **Boot without `systemctl enable`**: Quadlet units are generated, so systemd
-  refuses to enable them. `[Install] WantedBy=` inside the generated unit is what
-  starts the stack at boot.
-- **Upgrades**: `--upgrade` pulls `RUNNER_IMAGE` / `CACHE_IMAGE` and restarts every
-  unit; `AUTO_UPDATE=1` additionally sets Quadlet `AutoUpdate=registry`.
-- **Cache server**: `internal` (default, cache reachable as `http://cache-server:3000/`
-  over the stack network, no published port) or `host` (publishes `<port>:3000` for
-  jobs that use `container:`). `GHR_CACHE_MODE` selects the mode.
-- **Container jobs (DooD)**: the host Podman socket is mounted as both
-  `/var/run/docker.sock` and `/run/podman/podman.sock`, so `docker`-style steps keep
-  working. The Podman API compatibility layer speaks Docker API v1.40 and does not
-  support nested `docker compose`; containers created by workflows run as host root.
-  Set `GHR_PODMAN_SOCKET=` (empty) to deploy without any socket mount.
-- **Host firewall**: containers must be allowed to reach `https://api.github.com`,
-  which means the host has to forward traffic from the container network. The
-  installer probes this before starting anything and prints the fix (for example
-  `sudo ufw route allow in on podman1`); `GHR_SKIP_EGRESS_CHECK=yes` skips the probe.
-  See [Container egress and host firewalls](deployments/podman/README.md#container-egress-and-host-firewalls).
-- **Restart semantics**: units carry `StartLimitIntervalSec=0` with `RestartSec=10`,
-  so a runner that cannot register yet keeps retrying (every ten seconds) instead of
-  being parked in systemd's `failed` state.
-
-See [deployments/podman/README.md](deployments/podman/README.md) for the unit
-layout, operations, cache mode trade-offs, uninstall/rollback and troubleshooting.
-
----
-
-## Deployment Options Matrix
-
-| Topology | Docker Compose | CapRover | Kubernetes | Podman + systemd |
-|---|---|---|---|---|
-| **Single Runner** | [docker-compose.yml](docker-compose.yml) | [Single App Guide](deployments/caprover/README.md) | [Deployment + PVC](deployments/kubernetes/README.md#option-b-single-runner-deployment) | [Podman Deployment](deployments/podman/README.md) |
-| **Multi-Runner (Independent)** | [docker-compose.multi.yml](deployments/docker-compose/docker-compose.multi.yml) | [Multi-App Setup](deployments/caprover/README.md#option-b-independent-single-runner-apps) | [StatefulSet Cluster](deployments/kubernetes/README.md#option-a-scalable-cluster-statefulset) | [Adding Runners Later](deployments/podman/README.md#adding-runners-later) |
-| **Multi-Runner + Shared Cache** | [Multi-Repo Cache Compose](deployments/docker-compose/multi-repo-cache/README.md) | [One-Click App Template](deployments/caprover/multi-repo-cache/README.md) | [Kustomize Manifests](deployments/kubernetes/multi-repo-cache/README.md) | [Cache Server Modes](deployments/podman/README.md#cache-server-modes) |
-
----
-
-## 1. Quick Start (Manual Single Container)
-
-To start a single runner container quickly, use `docker run`.
+To start a single runner container quickly without the installer:
 
 ### Step 1: Obtain a Registration Token
 Generate a runner registration token from your GitHub repository or organization:
@@ -199,51 +77,19 @@ docker run -d \
   bestony/self-hosted-runner:latest
 ```
 
-The runner configures itself, registers with GitHub, and begins listening for jobs.
-Runner credentials persist in the `runner_data` volume. Container restarts do not require re-registration.
+The runner configures itself, registers with GitHub, and begins listening for jobs. Credentials persist in the `runner_data` volume. Container restarts do not require re-registration.
 
 ---
 
-## 2. Using with Cache Server
+## 3. Docker Compose Deployment
 
-This image supports an external GitHub Actions Cache Server (such as [falcondev-oss/github-actions-cache-server](https://github.com/falcondev-oss/github-actions-cache-server)).
-The runner image includes a binary patch for `ACTIONS_RESULTS_URL` and bundles `zstd` for fast compression.
-
-### How to Enable Cache
-
-Set the `ACTIONS_RESULTS_URL` environment variable:
-
-```bash
-docker run -d \
-  --name github-runner \
-  --restart unless-stopped \
-  -e RUNNER_URL="https://github.com/your-org/your-repo" \
-  -e RUNNER_TOKEN="YOUR_REGISTRATION_TOKEN" \
-  -e ACTIONS_RESULTS_URL="http://cache-server:3000/" \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v runner_data:/runner \
-  bestony/self-hosted-runner:latest
-```
-
-When `ACTIONS_RESULTS_URL` is configured:
-1. `actions/cache` workflow steps save and restore cache directly with your cache server.
-2. Official auto-updates are disabled (`--disableupdate`) to prevent overwriting the internal cache patch.
-3. If workflows execute container actions, ensure `ACTIONS_RESULTS_URL` uses an address reachable from the host (such as `http://host.docker.internal:3000/` or your server IP).
-
----
-
-## 3. Docker Compose File
-
-You can manage the runner and the cache server together with Docker Compose.
+You can manage runners and an optional cache server together using Docker Compose:
 
 ### `docker-compose.yml`
 
 ```yaml
 services:
   runner-1: &runner-base
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: bestony/self-hosted-runner:latest
     restart: unless-stopped
     environment:
@@ -258,8 +104,6 @@ services:
       - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - FIX_WORKSPACE_OWNERSHIP=${FIX_WORKSPACE_OWNERSHIP:-true}
-      - RUNNER_EXTRA_APT_PACKAGES=${RUNNER_EXTRA_APT_PACKAGES:-}
-      - RUNNER_WRITABLE_PATHS=${RUNNER_WRITABLE_PATHS:-}
     volumes:
       - runner_1_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
@@ -283,8 +127,6 @@ services:
       - DISABLE_AUTO_UPDATE=${DISABLE_AUTO_UPDATE:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - FIX_WORKSPACE_OWNERSHIP=${FIX_WORKSPACE_OWNERSHIP:-true}
-      - RUNNER_EXTRA_APT_PACKAGES=${RUNNER_EXTRA_APT_PACKAGES:-}
-      - RUNNER_WRITABLE_PATHS=${RUNNER_WRITABLE_PATHS:-}
     volumes:
       - runner_2_data:/runner
       - /var/run/docker.sock:/var/run/docker.sock
@@ -297,8 +139,6 @@ services:
   cache-server:
     image: ghcr.io/falcondev-oss/github-actions-cache-server:latest
     restart: unless-stopped
-#   ports:
-#     - "${CACHE_PORT:-3000}:3000"
     environment:
       API_BASE_URL: ${CACHE_API_BASE_URL:-http://cache-server:3000}
       STORAGE_DRIVER: filesystem
@@ -315,103 +155,46 @@ services:
 volumes:
   runner_1_data:
   runner_2_data:
-  runner_3_data:
-  runner_4_data:
   cache_data:
 ```
 
 ### Usage Instructions
 
-1. Create a `.env` file:
+1. **Prepare configuration**:
    ```bash
    cp .env.example .env
+   # Edit RUNNER_URL and RUNNER_TOKEN in .env
    ```
-2. Configure `RUNNER_URL` and `RUNNER_TOKEN` in `.env`.
-3. Start the services:
+
+2. **Start services**:
    ```bash
-   # Start single runner instance (default)
+   # Start single runner (default)
    docker compose up -d
 
-   # Start 2 concurrent runner instances
+   # Start 2 concurrent runners
    docker compose --profile multi up -d
 
-   # Scale to 4 concurrent runner instances
-   docker compose --profile scale up -d
-
-   # Start runner with cache server
+   # Start runner with shared Actions Cache Server
    docker compose --profile cache up -d
    ```
-4. View runner logs:
+
+3. **Check logs**:
    ```bash
    docker compose logs -f
    ```
 
 ---
 
-## 4. Running Multiple Independent Stacks on One Host
+## 4. Documentation & Advanced Topics
 
-You can run multiple independent runner stacks on the same host machine (for different teams, environments, or projects) without collisions:
+For specialized deployments, architectural specifications, and operations guides, refer to:
 
-- **Project Names**: Each stack uses a unique Docker Compose project name (via `COMPOSE_PROJECT_NAME` in `.env` or top-level `name:` in `docker-compose.yml`). The installer automatically generates deterministic, collision-free project names (`ghr-<dir>-<sha256:8>`).
-- **Container Names**: Static `container_name` attributes are omitted. Containers are dynamically named `<project>-<service>-<index>` by Compose.
-- **Network Isolation**: Each stack creates an isolated bridge network, preventing DNS or routing cross-talk.
-- **Volume & Credential Isolation**: Named volumes (e.g. `runner_data`, `cache_data`) are scoped per project, ensuring runner credentials and SQLite databases never conflict.
-- **Workspace Parity**: Job workspaces use directory-scoped paths (`${PWD}/work/<runner>` or `<install_dir>/work/runner-<n>`), ensuring Docker-outside-of-Docker (DooD) host mounts do not collide.
-- **Cache Ports**: In default internal mode, runners reach cache services over the internal project network without binding any host ports. In host-IP mode, distinct host ports are published.
-
----
-
-## 5. Hosted-Runner Compatibility
-
-Marketplace actions are written for the GitHub-hosted runner images. They rely on conventions that a bare self-hosted container does not have. A missing convention causes errors such as `EACCES: permission denied, mkdir '/opt/hostedtoolcache'` (`ruby/setup-ruby`, `actions/setup-python`) or `EACCES: permission denied, stat '/root/.gitconfig'` (`actions/checkout`).
-
-The image supplies these conventions as a contract. The container examines the contract at each start.
-
-| Convention | What the image supplies |
-|---|---|
-| Runner identity | The runner process runs as the unprivileged `runner` user with `HOME=/home/runner` and passwordless `sudo`. |
-| Tool cache | `RUNNER_TOOL_CACHE` and `AGENT_TOOLSDIRECTORY` are `/opt/hostedtoolcache`. The `runner` user owns the directory. Installed tools are kept in the `/runner` volume (`/runner/_tool-cache`), so a new container does not download them again. |
-| Workspace ownership | A job hook (`/opt/runner-hooks/fix-workspace-ownership.sh`) gives root-owned files in the job workspace, `RUNNER_TEMP` and the tool cache back to the `runner` user before and after each job. |
-| Baseline tools | Docker CLI with the Buildx and Compose plugins (through `/var/run/docker.sock`), GitHub CLI (`gh`), `git`, `git-lfs`, `curl`, `wget`, `jq`, `zip`, `unzip`, `xz`, `zstd`, `rsync`, `openssh-client`, `python3`. |
-| Native builds | `build-essential`, `pkg-config` and the headers `libssl-dev`, `libyaml-dev`, `libffi-dev`, `libreadline-dev`, `libgmp-dev`, `zlib1g-dev`. Ruby gems, Node.js addons and Python wheels with native code can be compiled. |
-| Locale | `LANG=C.UTF-8`. |
-
-`gh` needs a token in the job, for example `env: GH_TOKEN: ${{ github.token }}`. To install a system package in one workflow only, use `sudo apt-get update && sudo apt-get install -y <package>` in a step, as on a hosted runner.
-
-### Extension Points
-
-If a workflow needs something that the image does not supply, change the container configuration. An image rebuild is not necessary.
-
-| Variable | Default | Description |
+| Topic | Document | Description |
 |---|---|---|
-| `RUNNER_EXTRA_APT_PACKAGES` | - | apt packages to install when the container starts (separated by spaces or commas), for example `libpq-dev libsqlite3-dev`. |
-| `RUNNER_WRITABLE_PATHS` | - | Colon-separated absolute paths. The container creates each directory and gives it to the `runner` user. System directories such as `/usr` are refused. |
-| `RUNNER_INIT_DIR` | `/opt/runner-init.d` | Each `*.sh` file in this directory runs with `bash` before the runner starts. Mount your scripts into this directory. |
-| `RUNNER_TOOL_CACHE` | `/opt/hostedtoolcache` | Tool cache path. Do not change it unless it is necessary: prebuilt Ruby and Python binaries embed the default path. |
-| `RUNNER_TOOL_CACHE_PERSIST` | `true` | Set to `false` to keep the tool cache in the container filesystem. A volume that you mount at the tool cache path is always used as-is. |
-| `FIX_WORKSPACE_OWNERSHIP` | `true` | Set to `false` to disable the ownership hook. |
-| `ACTIONS_RUNNER_HOOK_JOB_STARTED` | ownership hook | Set your own script to replace the job-started hook. |
-| `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` | ownership hook | Set your own script to replace the job-completed hook. |
-
-A problem in an extension point does not stop the runner. The container log shows a warning.
-
-### Diagnostics
-
-The entrypoint runs `runner-doctor` as the `runner` user before the runner starts. If a convention is not satisfied, the container log shows a `FAIL` line with the cause. To get the full report from a container that is in operation:
-
-```bash
-docker exec -u runner <container> runner-doctor
-```
-
-### Parallel Jobs
-
-To run matrix jobs in parallel, register more than one runner: run the installer again in the same directory and choose `[A]dd runners`. One runner executes one job at a time.
-
----
-
-## 6. More Information
-
-For comprehensive documentation, refer to:
-- [deployments/podman/README.md](deployments/podman/README.md): Podman + systemd (Quadlet) deployment, unit layout, cache modes, uninstall and rollback.
-- [development.md](development.md): Architecture details, environment variable reference, DooD workspace setup, multi-platform image builds, Kubernetes / CapRover deployments, and CI/CD automation.
-- [GitHub Repository](https://github.com/bestony/self-hosted-action-runner): Source code, release notes, and issue tracker.
+| **Podman + systemd** | [deployments/podman/README.md](deployments/podman/README.md) | Quadlet unit generation, systemd boot lifecycle, egress firewall rules, and cache modes. |
+| **Shared Cache Server** | [deployments/docker-compose/multi-repo-cache/README.md](deployments/docker-compose/multi-repo-cache/README.md) | Shared cache architecture, DooD host IP routing, and `actions/cache` acceleration. |
+| **Multi-Stack Isolation** | [deployments/docker-compose/README.md](deployments/docker-compose/README.md) | Running multiple independent stacks on a single host without volume or network collisions. |
+| **Kubernetes Deployment** | [deployments/kubernetes/README.md](deployments/kubernetes/README.md) | Scalable StatefulSet clusters, Deployment + PVC manifests, and Kustomize setups. |
+| **CapRover PaaS** | [deployments/caprover/README.md](deployments/caprover/README.md) | One-click app templates and independent single/multi-runner configurations. |
+| **Compatibility Contract** | [development.md#8-hosted-runner-compatibility-contract](development.md#8-hosted-runner-compatibility-contract) | Toolcache standards (`/opt/hostedtoolcache`), `runner-doctor` diagnostics, and permission hooks. |
+| **Development & Env Reference** | [development.md](development.md) | Complete environment variable table, DooD workspace setup, and multi-arch image builds. |
