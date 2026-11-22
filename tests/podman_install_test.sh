@@ -328,7 +328,7 @@ assert_equals "true" \
 assert_contains "$RUNNER1_UNIT" "WantedBy=multi-user.target default.target" "Unit declares boot startup through [Install] WantedBy"
 
 assert_contains "$CACHE_UNIT" "Network=${PROJECT_NAME}-net:alias=cache-server" "Internal cache mode registers the cache-server network alias"
-assert_contains "$CACHE_UNIT" "HealthCmd=" "Cache unit declares a health check"
+assert_not_contains "$CACHE_UNIT" "HealthCmd=" "Cache unit declares no in-container health check (image is distroless)"
 assert_contains "$CACHE_ENV" "CACHE_CLEANUP_OLDER_THAN_DAYS=90" "Cache cleanup window is derived from the stack defaults"
 assert_contains "$CACHE_ENV" "STORAGE_FILESYSTEM_PATH=/data/cache" "Cache data is stored on the dedicated volume"
 assert_not_contains "$CACHE_UNIT" "PublishPort=" "Internal cache mode does not publish a host port"

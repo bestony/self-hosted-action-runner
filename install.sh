@@ -1254,12 +1254,6 @@ EOF
       CACHE_FILESYSTEM_MAX_USAGE_PERCENT: 90
     volumes:
       - cache_data:/data
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
 
 EOF
         fi
@@ -1298,7 +1292,7 @@ EOF
                 cat <<EOF
     depends_on:
       cache-server:
-        condition: service_healthy
+        condition: service_started
 EOF
             fi
             cat <<EOF

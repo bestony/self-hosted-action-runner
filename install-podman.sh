@@ -1714,11 +1714,6 @@ cache_volume_lines() {
     if [ "$CACHE_MODE" = "host" ] && [ -n "$CACHE_PORT" ]; then
         echo "PublishPort=${CACHE_PORT}:${CACHE_CONTAINER_PORT}"
     fi
-    echo "HealthCmd=wget -q --spider http://127.0.0.1:${CACHE_CONTAINER_PORT}/"
-    echo "HealthInterval=10s"
-    echo "HealthTimeout=5s"
-    echo "HealthRetries=5"
-    echo "HealthStartPeriod=10s"
 }
 
 quadlet_container_section() {
